@@ -1656,7 +1656,7 @@ def main():
         print(f"  {c('[5]', Fore.CYAN)}   Report (HTML + JSON)")
         print(f"  {c('[6]', Fore.CYAN)}   Tech Detect + CVE Mapping (Deep)")
         print(f"  {c('─'*40, Fore.CYAN)}")
-        print(f"  {c('[7]', Fore.GREEN)} 🚀  Run All (Full)")
+        print(f"  {c('[7]', Fore.GREEN)} Run All (Full)")
         print(f"  {c('[0]', Fore.RED)} ❌  Exit")
         print(f"{c('═'*50, Fore.CYAN)}")
         choice = input(f"\n  {c('Select', Fore.CYAN)} [0-7]: ").strip()

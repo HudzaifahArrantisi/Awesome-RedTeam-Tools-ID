@@ -1,8 +1,12 @@
 # RToolkit v2.0 - Unified Red Team Toolkit
 
-🔥 Gabungan 150+ tools red team dari [RedTeam-Tools](https://github.com/A-poc/RedTeam-Tools) menjadi **1 script Python** dengan 5 fase utama + WAF bypass content exfiltration.
+🔥 Gabungan 150+ tools red team dari [RedTeam-Tools](https://github.com/A-poc/RedTeam-Tools) menjadi **2 script Python**:
+- **rtoolkit.py** — 5 fase utama + WAF bypass content exfiltration (Python murni, cross-platform)
+- **rtoolkit-kali.py** — Deep Kali scanner yang mengintegrasikan tools Kali Linux (nuclei, dirsearch, ffuf, paramspider, nmap, whatweb, subfinder, httpx) dengan output tabel + payload exploit
 
 ## Fitur Utama
+
+### rtoolkit.py (Cross-Platform, Python Native)
 
 | Fase | Deskripsi |
 |------|-----------|
@@ -11,6 +15,16 @@
 | **💥 Exploitation** | Reverse shell generator (11 jenis: bash, python, nc, powershell, php, perl, ruby, nc_pipe, java, lua, golang), msfvenom commands, default cred checker |
 | **🔧 Post-Exploitation & PrivEsc** | Windows & Linux privesc checklist (15+ checks each), sensitive file finder, kernel exploit suggestions |
 | **📄 Reporting** | HTML report interaktif dark-theme, JSON report, severity summary (Critical/High/Medium/Low), auto-generated remediations |
+
+### rtoolkit-kali.py (Kali Linux Only — Deep Scanner with Real Tools)
+
+| Fase | Tools Kali | Output |
+|------|-----------|--------|
+| **Recon** | nmap, whatweb, subfinder, httpx | Ports, services, tech stack, subdomains |
+| **Directory Enum** | dirsearch, ffuf, gobuster | Hidden paths, backup files, admin panels |
+| **Parameter Discovery** | paramspider, ffuf | Parameter yang bisa di-inject |
+| **Vulnerability Scan** | nuclei, nikto, wpscan | **Tabel: Vuln + Severity + URL + Exploit Command** |
+| **Exploitation** | sqlmap | SQLi exploitation dengan dump DB |
 
 ### Fitur Baru v2.0
 - **Content Exfiltration with WAF Bypass** — Tidak hanya deteksi, tapi mencoba 30+ teknik bypass WAF/ADC (User-Agent rotation, path encoding, HTTP/1.0, IP spoofing, header injection, session cookies, TE chunked, tab smuggling, dll) untuk mengambil isi file sensitif
@@ -69,7 +83,49 @@ Target: https://example.com
 Pilih [0-7]: 2
 ```
 
-### 2. gen_cve.py (CVE Database Generator)
+### 2. RToolkit Kali-Pro (Kali Linux Deep Scanner)
+Tool ini mengintegrasikan tools Kali Linux secara langsung untuk scanning lebih mendalam dengan output tabel + exploit payload.
+
+```bash
+# Di Kali Linux (WAJIB)
+python3 rtoolkit-kali.py
+```
+
+**Tools Kali yang digunakan:**
+| Tool | Fungsi |
+|------|--------|
+| **nuclei** | Vulnerability scanning (critical/high/medium) dengan 5000+ templates |
+| **dirsearch** | Directory & file bruteforce (multi-extension) |
+| **ffuf** | Parameter fuzzing + deep content discovery |
+| **paramspider** | Parameter discovery dari Wayback Machine + crawling |
+| **whatweb** | Technology fingerprinting |
+| **nmap** | Port scanning + service version detection |
+| **subfinder** | Passive subdomain enumeration |
+| **httpx** | HTTP probing untuk live host verification |
+| **nikto** | Web server vulnerability scan |
+| **sqlmap** | SQL injection exploitation |
+| **wpscan** | WordPress vulnerability scanner (otomatis jika WP terdeteksi) |
+
+**Fitur:**
+- Auto-detect tools yang terinstall
+- Parse output JSON dari nuclei, ffuf, nikto, wpscan
+- **Tabel hasil scan** dengan kolom: Vulnerability, Severity, Vulnerable URL, Exploit Command
+- **Exploit payload** langsung untuk setiap kerentanan (curl command, sqlmap, dll)
+- Group berdasarkan severity (CRITICAL → HIGH → MEDIUM)
+- Deteksi file sensitif: .env, .git, phpinfo, backup, config, cloud credentials
+
+**Output:**
+```
+[CRITICAL] Sensitive File: /.env
+        URL: https://target.com/.env
+        CMD: curl -s 'https://target.com/.env'
+
+[HIGH] WordPress Plugin XSS
+        URL: https://target.com/wp-content/plugins/xyz
+        CMD: curl -s 'https://target.com/wp-content/plugins/xyz?param=<script>alert(1)</script>'
+```
+
+### 3. gen_cve.py (CVE Database Generator)
 ```bash
 python gen_cve.py
 ```
