@@ -2,7 +2,7 @@
 
 🔥 Gabungan 150+ tools red team dari [RedTeam-Tools](https://github.com/A-poc/RedTeam-Tools) menjadi **2 script Python**:
 - **rtoolkit.py** — 5 fase utama + WAF bypass content exfiltration (Python murni, cross-platform)
-- **rtoolkit-kali.py** — Deep Kali scanner yang mengintegrasikan tools Kali Linux (nuclei, dirsearch, ffuf, paramspider, nmap, whatweb, subfinder, httpx) dengan output tabel + payload exploit
+- **rtoolkit-kali.py** — Deep Kali scanner yang mengintegrasikan tools Kali Linux (nuclei, dirsearch, ffuf, paramspider, Arjun, x8, endpoints-extractor, nmap, whatweb, subfinder, httpx, nikto, sqlmap, wpscan) dengan output tabel + payload exploit
 
 ## Fitur Utama
 
@@ -22,8 +22,10 @@
 |------|-----------|--------|
 | **Recon** | nmap, whatweb, subfinder, httpx | Ports, services, tech stack, subdomains |
 | **Directory Enum** | dirsearch, ffuf, gobuster | Hidden paths, backup files, admin panels |
-| **Parameter Discovery** | paramspider, ffuf | Parameter yang bisa di-inject |
+| **Parameter Discovery** | paramspider, ffuf, **endpoints-extractor**, **Arjun**, **x8** | Parameter yang bisa di-inject + hidden params |
+| **Advanced Parameter Discovery** | endpoints-extractor → Arjun → x8 → auto-feed nuclei/sqlmap | Ekstrak endpoint URL, discover hidden params, auto-test injection |
 | **Vulnerability Scan** | nuclei, nikto, wpscan | **Tabel: Vuln + Severity + URL + Exploit Command** |
+| **Database Exploitation** | psql, mysql, hydra, metasploit | PostgreSQL/MySQL/MSSQL default creds, brute force, auto-enum, RCE payloads |
 | **Exploitation** | sqlmap | SQLi exploitation dengan dump DB |
 
 ### Fitur Baru v2.0
@@ -83,7 +85,7 @@ Target: https://example.com
 Pilih [0-7]: 2
 ```
 
-### 2. RToolkit Kali-Pro (Kali Linux Deep Scanner)
+### 2. RToolkit Kali-Pro v2.0 (Kali Linux Deep Scanner)
 Tool ini mengintegrasikan tools Kali Linux secara langsung untuk scanning lebih mendalam dengan output tabel + exploit payload.
 
 ```bash
@@ -98,6 +100,9 @@ python3 rtoolkit-kali.py
 | **dirsearch** | Directory & file bruteforce (multi-extension) |
 | **ffuf** | Parameter fuzzing + deep content discovery |
 | **paramspider** | Parameter discovery dari Wayback Machine + crawling |
+| **endpoints-extractor** | Ekstrak endpoint URL dari HTML, JS, JSON — [yogsec/endpoints-extractor](https://github.com/yogsec/endpoints-extractor) |
+| **Arjun** | HTTP Parameter Discovery Suite (25,890+ parameter wordlist) — [s0md3v/Arjun](https://github.com/s0md3v/Arjun) |
+| **x8** | Hidden parameter fuzzer (Rust, page comparison, high accuracy) — [Sh1Yo/x8](https://github.com/Sh1Yo/x8) |
 | **whatweb** | Technology fingerprinting |
 | **nmap** | Port scanning + service version detection |
 | **subfinder** | Passive subdomain enumeration |

