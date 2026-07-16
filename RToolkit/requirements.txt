@@ -1,0 +1,6 @@
+requests>=2.25.0
+colorama>=0.4.4
+urllib3
+whois
+requests-html
+publicsuffixlist
