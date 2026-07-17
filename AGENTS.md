@@ -44,10 +44,10 @@ python gen_cve.py  # Regenerates cve_data.json (embedded in rtoolkit.py)
 ## File Purposes
 | File | Purpose |
 |------|---------|
-| `rtoolkit.py` | Standalone Python toolkit (portable) |
-| `rtoolkit-kali.py` | Kali-native scanner (faster, deeper, needs binaries) |
+| `rtoolkit-kali.py` | **MASTER tool** — semua fitur: recon, port scan, banner grab, CVE match, dir bruteforce, SQLi, nuclei/nikto/wp scan, DB exploit, reverse shell, reporting. Auto-detect Kali binaries, fallback pure Python. |
+| `rtoolkit.py` | Lightweight pure-Python alternative (portable, no binaries needed) |
 | `gen_cve.py` | Builds `cve_data.json` for version→CVE mapping |
-| `cve_data.json` | CVE database (Apache, nginx, PHP, WP, Joomla, Drupal, MySQL, OpenSSL) |
+| `cve_data.json` | CVE database (476 entries across 10 software types) |
 | `README.md` | 150+ tool reference by MITRE ATT&CK phase |
 | `requirements.txt` | Python deps for rtoolkit.py |
 | `CLAUDE.md` | Repo docs for Claude Code |

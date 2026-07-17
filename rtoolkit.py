@@ -49,7 +49,7 @@ def banner():
 {c('║', Fore.RED)}  {c('██╔══██╗   ██║   ██║   ██║██║   ██║██╔═██╗ ██║     ██║   ██║   ', Fore.RED)}
 {c('║', Fore.RED)}  {c('██║  ██║   ██║   ╚██████╔╝╚██████╔╝██║  ██╗███████╗██║   ██║   ', Fore.RED)}
 {c('║', Fore.RED)}  {c('╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝   ', Fore.RED)}
-{c('║', Fore.RED)}  {c('  v2.0 - Deep Recon | SQLi | Dir Buster | CVE Mapping | Cascade', Fore.YELLOW)}
+{c('║', Fore.RED)}  {c('  v1.2 - Deep Recon | SQLi | Dir Buster | CVE Mapping | Cascade', Fore.YELLOW)}
 {c('╚══════════════════════════════════════════════════════════════╝', Fore.RED)}""")
 
 def validate_target(target):
