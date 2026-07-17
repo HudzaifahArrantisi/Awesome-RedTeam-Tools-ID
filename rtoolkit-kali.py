@@ -269,21 +269,11 @@ def phase1_nmap(domain):
             for line in stdout.split('\n'):
                 m = re.search(r'^(\d+)/tcp\s+open\s+(\S+)',line)
                 if m: REPORT["ports"].append(f"{m.group(1)}/tcp ({m.group(2)})")
-        # Second pass — full port scan if needed
-        print(f"\n  {c('[1a] Nmap Full Port Scan — all 65535 ports',G)}")
-        stdout,_,ok = run_cmd(
-            f"nmap -sS -T4 -p- --open -oN {RESULTS_DIR}/nmap_full.txt {target_ip}",
-            900, "nmap full port scan (all 65535)")
-        if ok:
-            extra_ports = []
-            for line in stdout.split('\n'):
-                m = re.search(r'^(\d+)/tcp\s+open\s+(\S+)',line)
-                if m: extra_ports.append(m.group(1))
-            if extra_ports:
-                print(f"    Extra ports: {c(','.join(extra_ports[:20]),W)}")
-                # Version scan on extra ports
-                ports_str = ','.join(extra_ports)
-                run_cmd(f"nmap -sV -p{ports_str} --open -oN {RESULTS_DIR}/nmap_extra.txt {target_ip}",300)
+        # Second pass — full port scan (quick, min-rate agar cepat)
+        print(f"\n  {c('[1a] Nmap Full Port Scan — all 65535 ports (fast)',G)}")
+        stdout,_,_ = run_cmd(
+            f"nmap -sS -T5 --min-rate=10000 -p- --open -oN {RESULTS_DIR}/nmap_full.txt {target_ip}",
+            600, "nmap full port scan (min-rate 10000)")
         # Show results
         nfile = RESULTS_DIR/"nmap_deep.txt"
         if nfile.exists():
