@@ -272,8 +272,8 @@ def phase1_nmap(domain):
         # Second pass — full port scan (quick, min-rate agar cepat)
         print(f"\n  {c('[1a] Nmap Full Port Scan — all 65535 ports (fast)',G)}")
         stdout,_,_ = run_cmd(
-            f"nmap -sS -T5 --min-rate=10000 -p- --open -oN {RESULTS_DIR}/nmap_full.txt {target_ip}",
-            600, "nmap full port scan (min-rate 10000)")
+            f"nmap -sS -T4 -p- --open -oN {RESULTS_DIR}/nmap_full.txt {target_ip}",
+            600, "nmap full port scan (all 65535)")
         # Show results
         nfile = RESULTS_DIR/"nmap_deep.txt"
         if nfile.exists():
