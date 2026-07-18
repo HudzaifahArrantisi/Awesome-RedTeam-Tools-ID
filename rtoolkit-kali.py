@@ -1597,7 +1597,7 @@ def phase3_vuln_scan(live_urls, tools):
 
         # 3e. WPScan
         has_wp = (any("WordPress" in t for t in REPORT["technologies"]) or
-                  any("wp" in u.lower() for u in REPORT["directories"]) or
+                  any("wp" in d.get("url","") for d in REPORT["directories"]) or
                   any("wp" in path.get("url","").lower() for path in REPORT["vulnerabilities"]))
         if tools.get("wpscan") and has_wp:
             print(f"  {c('[3e] WPScan WordPress',G)}")
