@@ -1049,7 +1049,8 @@ def probe_banner(ip, port):
 def phase1_nmap(domain):
     """Phase 1a: Deep nmap port scan + service version detection."""
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 1a: RECON — Nmap Port Scan',BOLD)}")
+    print(f"  {c('PHASE 1a: PORT SCAN — Mencari port terbuka & layanan',BOLD)}")
+    print(f"  {c('  ⤷ Tujuan: Mengetahui service apa saja yang berjalan di target',DIM)}")
     print(f"{c('='*65,Y)}")
 
     tools = {}
@@ -1065,16 +1066,14 @@ def phase1_nmap(domain):
         target_ip = domain
 
     print(f"  IP: {c(target_ip,W)}")
-    t_icons = ""
-    for t in ["nmap","subfinder","httpx","whatweb","nuclei","sqlmap","dirsearch","ffuf"]:
-        t_icons += c("✓",G) if tools[t] else c("✗",R)
-        t_icons += t[:3]+" "
-    print(f"  Tools: {t_icons}")
+    print(f"  Tools: {c('✓',G)} nmap {c('✗',R) if not tools['nmap'] else c('✓',G)}")
+    print(f"  {c('───'*22,DIM)}")
 
     if tools["nmap"]:
         do_full = cfg("nmap_full_scan", False)
-        scan_desc = "SYN+version+script scan (top 1000)" if not do_full else "SYN+version+script scan (ALL 65535 ports)"
-        print(f"\n  {c('[1a] Nmap Deep Scan — '+scan_desc,G)}")
+        scan_desc = "Memindai port umum (top 1000)" if not do_full else "Memindai SEMUA 65535 port"
+        print(f"\n  {c('[1] Nmap Deep Scan — '+scan_desc,G)}")
+        print(f"  {c('  ⤷ Mencari port terbuka + versi service + script deteksi',DIM)}")
         nmap_fn = f"nmap_deep_{domain.replace('.','_')}.txt"
         nmap_cmd = (
             f"nmap -sS -sV -sC -T4 {'-p-' if do_full else '--top-ports 1000'} "
@@ -1100,13 +1099,16 @@ def phase1_nmap(domain):
                 if m:
                     port_lines.append([m.group(1), m.group(2), m.group(3)[:40]])
             if port_lines:
+                print(f"\n  {c('✅ PORT TERBUKA DITEMUKAN:',G)} {len(port_lines)} port")
+                print(f"  {c('  ⤷ Port terbuka = celah masuk potensial. Semakin banyak port, semakin besar',DIM)}")
+                print(f"  {c('     permukaan serangan (attack surface).',DIM)}")
                 print_table(["Port","Service","Version"], port_lines[:20],
-                           f"[NMAP OPEN PORTS ({len(port_lines)} total)]")
+                           f"[DAFTAR PORT TERBUKA ({len(port_lines)} total)]")
                 if len(port_lines) > 20:
-                    print(f"    ... +{len(port_lines)-20} more")
+                    print(f"    ... dan {len(port_lines)-20} port lainnya (lihat file output)")
             if os_detected:
-                print(f"  OS: {c(os_detected[0],W)}")
-            print(f"  Hosts up: {hosts_up}")
+                print(f"  💻 OS: {c(os_detected[0],W)}")
+            print(f"  📡 Host aktif: {hosts_up}")
 
         # Extra nmap scan: OS detection + vuln scripts + traceroute
         extra_fn = f"nmap_extra_{domain.replace('.','_')}.txt"
@@ -1114,7 +1116,8 @@ def phase1_nmap(domain):
             f"nmap -sV -O --traceroute --script vuln -T4 "
             f"--top-ports 2000 --open -oN {RESULTS_DIR}/{extra_fn} {target_ip}"
         )
-        print(f"\n  {c('[1a] Nmap Extra Scan — OS + vuln scripts + traceroute',G)}")
+        print(f"\n  {c('[2] Nmap Extra Scan — OS + kerentanan + rute jaringan',G)}")
+        print(f"  {c('  ⤷ Deteksi sistem operasi, script vuln, dan jalur traceroute',DIM)}")
         stdout2, _, ok2 = run_cmd_stream(extra_cmd, cfg("nmap_timeout", 900), desc="Extra: OS + vuln scripts")
         if ok2:
             efile = RESULTS_DIR / extra_fn
@@ -1124,18 +1127,18 @@ def phase1_nmap(domain):
                 ports2 = len(re.findall(r'^(\d+)/tcp\s+open', econtent))
                 vulns = re.findall(r'\|?\s*(\w[\w-]*)\s*:\s*(HIGH|CRITICAL|MEDIUM)', econtent, re.I)
                 hops = re.findall(r'^\d+\s+[\d.]+', econtent, re.M)
-                print(f"    Extra: {c(f'{ports2} open ports',W)}, OS: {c(os2[0] if os2 else 'N/A',W)}, Vulns: {len(vulns)}, Hops: {len(hops)}")
+                print(f"    ➜ Port: {c(f'{ports2}',W)} | OS: {c(os2[0] if os2 else 'N/A',W)} | Vuln: {len(vulns)} | Hop: {len(hops)}")
     else:
-        print(f"\n  {c('[1a] Nmap not found — using pure Python port scan',Y)}")
+        print(f"\n  {c('[!] nmap tidak ditemukan — menggunakan scanner bawaan Python',Y)}")
         open_ports = port_scan(target_ip)
-        print(f"  Found {c(len(open_ports),W)} open ports")
+        print(f"  ✅ Ditemukan {c(len(open_ports),W)} port terbuka")
         if open_ports:
             pt = [[str(p), socket.getservbyport(p, 'tcp') if p < 1024 else ""] for p in open_ports[:25]]
-            print_table(["Port","Service"], pt, "[OPEN PORTS]")
+            print_table(["Port","Service"], pt, "[PORT TERBUKA]")
             if len(open_ports) > 25:
                 extra = open_ports[25:]
                 pt2 = [[str(p), ""] for p in extra]
-                print_table(["Port","Service"], pt2, "[MORE OPEN PORTS]")
+                print_table(["Port","Service"], pt2, "[PORTS LANJUTAN]")
 
     return target_ip, tools
 
@@ -1143,14 +1146,17 @@ def phase1_nmap(domain):
 def phase1_banner_grab(domain, target_ip, open_ports=None):
     """Phase 1b: Banner grabbing + version detection + CVE matching."""
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 1b: RECON — Banner Grab + CVE Detection',BOLD)}")
+    print(f"  {c('PHASE 1b: BANNER GRAB — Membaca identitas layanan',BOLD)}")
+    print(f"  {c('  ⤷ Mendapatkan versi software + mencocokkan dengan database CVE',DIM)}")
     print(f"{c('='*65,Y)}")
 
     if not open_ports:
         open_ports = port_scan(target_ip)
     if not open_ports:
-        print(f"  {c('No open ports found',Y)}")
+        print(f"  {c('ℹ️  Tidak ada port terbuka — tidak ada yang bisa di-banner grab',Y)}")
         return []
+
+    print(f"  🎯 Memeriksa {len(open_ports)} port...")
 
     services = []
     for port in open_ports:
@@ -1196,7 +1202,10 @@ def phase1_banner_grab(domain, target_ip, open_ports=None):
         ver = s.get("version", "") or "-"
         tech_str = "; ".join(f"{k}={v}" for k, v in s.get("techs", {}).items()) or s.get("banner", "")[:40]
         svc_table.append([str(s["port"]), s.get("protocol", "-"), ver, tech_str, s.get("title", "")[:30]])
-    print_table(["Port","Proto","Version","Detail","Title"], svc_table, "[BANNER GRAB RESULTS]")
+    if svc_table:
+        print_table(["Port","Proto","Version","Detail","Title"], svc_table, "[HASIL BANNER GRAB]")
+    else:
+        print(f"  {c('ℹ️  Tidak ada service yang teridentifikasi',Y)}")
 
     # CVE matching
     cve_count = 0
@@ -1213,14 +1222,18 @@ def phase1_banner_grab(domain, target_ip, open_ports=None):
                 cve_count += 1
 
     if REPORT["cves"]:
+        print(f"\n  {c('⚠️  CVE DITEMUKAN:',R)} {len(REPORT['cves'])} kerentanan tercatat")
+        print(f"  {c('  ⤷ CVE = kerentanan yang sudah dikenal publik. Prioritaskan yang CRITICAL!',DIM)}")
         ct = [[str(cv["port"]), cv["service"], cv["software"], cv["version"],
                c(cv["cve"][:55], SEV_COLORS.get(cv["severity"], W)),
                c(cv["severity"], SEV_COLORS.get(cv["severity"], W))]
               for cv in REPORT["cves"]]
         print_table(["Port","Svc","Software","Ver","CVE","Sev"], ct[:30],
-                   f"[CVEs FOUND ({len(REPORT['cves'])} total)]")
+                   f"[DAFTAR CVE ({len(REPORT['cves'])} total)]")
+        if len(ct) > 30:
+            print(f"    ... dan {len(ct)-30} CVE lainnya (lihat report)")
     else:
-        print(f"  {c('No CVEs matched from banners',G)}")
+        print(f"  {c('✅ Tidak ada CVE yang cocok dari banner service',G)}")
 
     return services
 
@@ -1228,7 +1241,8 @@ def phase1_banner_grab(domain, target_ip, open_ports=None):
 def phase1_subdomains(domain, tools):
     """Phase 1c: Subdomain enumeration via subfinder + crt.sh."""
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 1c: RECON — Subdomain Enumeration',BOLD)}")
+    print(f"  {c('PHASE 1c: SUBDOMAIN — Mencari subdomain target',BOLD)}")
+    print(f"  {c('  ⤷ Subdomain = cabang domain (admin.example.com, mail.example.com, dll)',DIM)}")
     print(f"{c('='*65,Y)}")
 
     all_subs = {domain}
@@ -1287,7 +1301,8 @@ def phase1_subdomains(domain, tools):
 def phase1_httpx(domain, all_subs, tools):
     """Phase 1d: httpx probe for live web hosts."""
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 1d: RECON — httpx Live Host Probing',BOLD)}")
+    print(f"  {c('PHASE 1d: LIVE HOST — Mengetes subdomain mana yang aktif',BOLD)}")
+    print(f"  {c('  ⤷ HTTP/HTTPS probe untuk menemukan web server yang merespon',DIM)}")
     print(f"{c('='*65,Y)}")
 
     live_urls = {f"https://{domain}", f"http://{domain}"}
@@ -1389,7 +1404,8 @@ def run_phase1_concurrent(domain):
 def phase2_discovery(live_urls, tools):
     """Phase 2: Directory + Parameter discovery."""
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 2: DIRECTORY + PARAMETER DISCOVERY',BOLD)}")
+    print(f"  {c('PHASE 2: DIRECTORY — Mencari direktori & parameter tersembunyi',BOLD)}")
+    print(f"  {c('  ⤷ Menemukan halaman admin, backup, API endpoint, dan parameter',DIM)}")
     print(f"{c('='*65,Y)}")
 
     for url in live_urls[:5]:
@@ -1487,7 +1503,8 @@ SENSITIVE_PATHS = [
 def phase3_vuln_scan(live_urls, tools):
     """Phase 3: Vulnerability scanning."""
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 3: VULNERABILITY SCANNING',BOLD)}")
+    print(f"  {c('PHASE 3: VULN SCAN — Memindai kerentanan keamanan',BOLD)}")
+    print(f"  {c('  ⤷ Mengecek celah SQLi, file sensitif, template CVE, misconfig',DIM)}")
     print(f"{c('='*65,Y)}")
 
     for url in live_urls[:5]:
@@ -1497,7 +1514,8 @@ def phase3_vuln_scan(live_urls, tools):
         # 3a. Nuclei
         if tools.get("nuclei"):
             for sev in ["critical", "high", "medium"]:
-                print(f"  {c(f'[3a] Nuclei {sev.upper()}',G)}")
+                sev_label = {"critical":"CRITICAL (sangat berbahaya)", "high":"HIGH (berbahaya)", "medium":"MEDIUM (sedang)"}[sev]
+                print(f"  {c(f'[3a] Nuclei — Mencari template CVE severity: {sev_label}',G)}")
                 stdout, _, ok = run_cmd(
                     f"nuclei -u {url} -severity {sev} -silent -json "
                     f"-o {RESULTS_DIR}/nuclei_{domain}_{sev}.json 2>/dev/null",
@@ -1519,7 +1537,8 @@ def phase3_vuln_scan(live_urls, tools):
 
         # 3b. Nikto
         if tools.get("nikto"):
-            print(f"  {c('[3b] Nikto web server scan',G)}")
+            print(f"  {c('[3b] Nikto — Scanner misconfig web server',G)}")
+            print(f"  {c('  ⤷ Mendeteksi konfigurasi server yang salah / berbahaya',DIM)}")
             run_cmd(
                 f"nikto -h {url} -Format json -output {RESULTS_DIR}/nikto_{domain}.json 2>/dev/null",
                 cfg("nikto_timeout", 300))
@@ -1541,7 +1560,8 @@ def phase3_vuln_scan(live_urls, tools):
                     pass
 
         # 3c. Sensitive file exposure
-        print(f"  {c('[3c] Sensitive file check',G)}")
+        print(f"  {c('[3c] File sensitif — Mengecek file penting yang terekspos',G)}")
+        print(f"  {c('  ⤷ .env, .git/config, wp-config.php, backup, dll — 60+ path',DIM)}")
         if HAS_REQUESTS:
             def check_sensitive(path):
                 try:
@@ -1573,7 +1593,8 @@ def phase3_vuln_scan(live_urls, tools):
                 ex.map(check_sensitive, SENSITIVE_PATHS)
 
         # 3d. SQL injection detection (quick check)
-        print(f"  {c('[3d] SQL injection detection',G)}")
+        print(f"  {c('[3d] SQL Injection — Deteksi celah SQL injection',G)}")
+        print(f"  {c('  ⤷ Mengirim payload uji ke parameter URL, cek error database',DIM)}")
         sqli_payloads = ["'", "\"", "')", "' OR '1'='1", "' OR 1=1 -- -"]
         sqli_errors = {
             "MySQL": [r"SQL syntax.*MySQL", r"#1064"],
@@ -1607,7 +1628,8 @@ def phase3_vuln_scan(live_urls, tools):
 
         # SQLMap
         if tools.get("sqlmap"):
-            print(f"  {c('[3d] SQLMap automated scan',G)}")
+            print(f"  {c('[3d] SQLMap — Scanner SQL injection otomatis',G)}")
+            print(f"  {c('  ⤷ Menjalankan sqlmap pada parameter umum (id, page, q, dll)',DIM)}")
             for param in ["id","page","q","s","search","cat"]:
                 run_cmd(
                     f"sqlmap -u '{url}?{param}=1' --batch --level 2 --risk 1 "
@@ -1619,7 +1641,8 @@ def phase3_vuln_scan(live_urls, tools):
                   any("wp" in d.get("url","") for d in REPORT["directories"]) or
                   any("wp" in path.get("url","").lower() for path in REPORT["vulnerabilities"]))
         if tools.get("wpscan") and has_wp:
-            print(f"  {c('[3e] WPScan WordPress',G)}")
+            print(f"  {c('[3e] WPScan — Scanner keamanan WordPress',G)}")
+            print(f"  {c('  ⤷ Mendeteksi plugin/vulnerability khusus WordPress',DIM)}")
             run_cmd(
                 f"wpscan --url {url} --no-update --format json -o {RESULTS_DIR}/wpscan_{domain}.json 2>/dev/null",
                 300)
@@ -1640,7 +1663,8 @@ def phase3_vuln_scan(live_urls, tools):
 def phase4_db(domain):
     """Phase 4: Database exploitation."""
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 4: DATABASE EXPLOITATION',BOLD)}")
+    print(f"  {c('PHASE 4: DATABASE — Uji coba akses database',BOLD)}")
+    print(f"  {c('  ⤷ Bruteforce credential PostgreSQL / MySQL / MSSQL',DIM)}")
     print(f"{c('='*65,Y)}")
 
     db_services = [s for s in REPORT["services"] if s["protocol"] in ["postgresql","mysql","mssql"]]
@@ -1711,7 +1735,8 @@ def phase4_db(domain):
 def phase5_exploit(domain):
     """Phase 5: Exploitation — reverse shell + exploit commands."""
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 5: EXPLOITATION ENGINE',BOLD)}")
+    print(f"  {c('PHASE 5: EXPLOIT — Menyusun perintah serangan',BOLD)}")
+    print(f"  {c('  ⤷ Reverse shell + perintah exploit untuk dicoba manual',DIM)}")
     print(f"{c('='*65,Y)}")
 
     lhost = cfg("lhost", "YOUR_IP")
@@ -1772,7 +1797,8 @@ def phase5_exploit(domain):
 @timer
 def phase6_report(domain):
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 6: REPORTING',BOLD)}")
+    print(f"  {c('PHASE 6: REPORT — Membuat laporan hasil scan',BOLD)}")
+    print(f"  {c('  ⤷ Ringkasan temuan + HTML report + JSON report',DIM)}")
     print(f"{c('='*65,Y)}")
 
     for v in REPORT["vulnerabilities"]:
@@ -1863,11 +1889,12 @@ tr:hover{{background:#1c2128}} .sev-CRITICAL{{color:#ff6b6b;font-weight:bold}} .
         json.dump(REPORT, f, indent=2, default=str)
     print(f"  {c(f'JSON: {json_fn}',G)}")
 
-# ====== PHASE 1c: TECH DETECTION + HTTP HEADERS + SSL BYPASS (from rtoolkit.py) ======
+# ====== PHASE 1c: TECH DETECTION + HTTP HEADERS + SSL BYPASS ======
 @timer
 def phase1c_tech_deep(domain, live_urls):
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 1c: Deep Tech Detection + HTTP Headers + WAF Probe',BOLD)}")
+    print(f"  {c('PHASE 1c: TEKNOLOGI — Deteksi CMS, framework, & header keamanan',BOLD)}")
+    print(f"  {c('  ⤷ Identifikasi WordPress/Joomla/Drupal, JS framework, CDN, cookie',DIM)}")
     print(f"{c('='*65,Y)}")
     if not live_urls:
         live_urls = [f"http://{domain}", f"https://{domain}"]
@@ -1953,7 +1980,8 @@ def phase1c_tech_deep(domain, live_urls):
 @timer
 def phase2b_deep_dir_bruteforce(domain, live_urls):
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 2b: Deep Recursive Directory Bruteforce',BOLD)}")
+    print(f"  {c('PHASE 2b: DIRECTORY — Bruteforce direktori 2 level',BOLD)}")
+    print(f"  {c('  ⤷ Mencari path tersembunyi dengan 300+ kata, recursive 2 level',DIM)}")
     print(f"{c('='*65,Y)}")
     for url in live_urls[:2]:
         try:
@@ -1979,7 +2007,8 @@ def phase2b_deep_dir_bruteforce(domain, live_urls):
 @timer
 def phase3b_sqli_deep(domain, live_urls):
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 3b: Deep SQLi Detection — Time-Based + Error-Based (5 DBs)',BOLD)}")
+    print(f"  {c('PHASE 3b: SQLI — Deteksi SQL injection mendalam',BOLD)}")
+    print(f"  {c('  ⤷ Time-based + error-based untuk 5 DB: MySQL, MSSQL, Oracle, PostgreSQL, SQLite',DIM)}")
     print(f"{c('='*65,Y)}")
     for url in live_urls[:3]:
         print(f"\n  {c(f'[+] Scanning: {url}',G)}")
@@ -2003,7 +2032,8 @@ def phase3b_sqli_deep(domain, live_urls):
 @timer
 def phase1d_cascade_scan(domain, subdomains):
     print(f"\n{c('='*65,Y)}")
-    print(f"  {c('PHASE 1d: Cascading Subdomain Scan',BOLD)}")
+    print(f"  {c('PHASE 1d: CASCADE — Scan subdomain satu per satu',BOLD)}")
+    print(f"  {c('  ⤷ Cek port + deteksi teknologi di setiap subdomain (max 5)',DIM)}")
     print(f"{c('='*65,Y)}")
     if not subdomains:
         print(f"  {c('No subdomains to cascade',Y)}")
@@ -2137,7 +2167,8 @@ def main():
 
         # TLS version check
         print(f"\n{c('='*65,Y)}")
-        print(f"  {c('PHASE 1e: SSL/TLS Version Check',BOLD)}")
+        print(f"  {c('PHASE 1e: TLS — Cek versi SSL/TLS yang didukung',BOLD)}")
+        print(f"  {c('  ⤷ TLS 1.0/1.1 = usang & tidak aman. Seharusnya hanya TLS 1.2+',DIM)}")
         print(f"{c('='*65,Y)}")
         for targ in [domain, target_ip]:
             try:
@@ -2176,8 +2207,12 @@ def main():
         phase6_report(domain)
 
     total_elapsed = int(time.time() - start_global)
-    print(f"\n  {c('Pipeline selesai dalam '+str(total_elapsed)+' detik!',G)}")
-    print(f"  {c('Hasil di:',C)} {RESULTS_DIR}/")
+    print(f"\n  {c('═'*55,G)}")
+    total_vulns = sum(REPORT["summary"].get(k,0) for k in ["critical","high","medium","low"])
+    print(f"  {c('✅ SCAN SELESAI!',BOLD)} {c(str(total_elapsed)+' detik',W)}")
+    print(f"  {c('📊 Ringkasan:',G)} {c(str(len(REPORT['cves'])),R)} CVE | {c(str(total_vulns),R)} vuln | {c(str(len(REPORT['subdomains'])),W)} subdomain | {c(str(len(REPORT['ports'])),W)} port")
+    print(f"  {c('📁 Hasil di:',C)} {RESULTS_DIR}/")
+    print(f"  {c('═'*55,G)}")
 
 if __name__ == "__main__":
     try:
