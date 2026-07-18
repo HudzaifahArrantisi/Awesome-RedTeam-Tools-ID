@@ -1,6 +1,6 @@
+# Core dependencies for rtoolkit-kali.py & rtoolkit.py
 requests>=2.25.0
+urllib3>=1.26.0
+
+# Optional: for colored output on Windows
 colorama>=0.4.4
-urllib3
-whois
-requests-html
-publicsuffixlist
