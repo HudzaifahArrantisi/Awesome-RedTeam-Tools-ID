@@ -1075,9 +1075,10 @@ def phase1_nmap(domain):
         do_full = cfg("nmap_full_scan", False)
         scan_desc = "SYN+version+script scan (top 1000)" if not do_full else "SYN+version+script scan (ALL 65535 ports)"
         print(f"\n  {c('[1a] Nmap Deep Scan — '+scan_desc,G)}")
+        nmap_fn = f"nmap_deep_{domain.replace('.','_')}.txt"
         nmap_cmd = (
             f"nmap -sS -sV -sC -T4 {'-p-' if do_full else '--top-ports 1000'} "
-            f"--open -oN {RESULTS_DIR}/nmap_deep.txt {target_ip}"
+            f"--open -oN {RESULTS_DIR}/{nmap_fn} {target_ip}"
         )
         stdout, stderr, ok = run_cmd_stream(nmap_cmd, cfg("nmap_timeout", 600), desc=scan_desc)
 
@@ -1088,7 +1089,7 @@ def phase1_nmap(domain):
                     REPORT["ports"].append(f"{m.group(1)}/tcp ({m.group(2)})")
 
         # Show results
-        nfile = RESULTS_DIR / "nmap_deep.txt"
+        nfile = RESULTS_DIR / nmap_fn
         if nfile.exists():
             content = nfile.read_text()
             hosts_up = len(re.findall(r'Host is up', content))
@@ -1106,6 +1107,24 @@ def phase1_nmap(domain):
             if os_detected:
                 print(f"  OS: {c(os_detected[0],W)}")
             print(f"  Hosts up: {hosts_up}")
+
+        # Extra nmap scan: OS detection + vuln scripts + traceroute
+        extra_fn = f"nmap_extra_{domain.replace('.','_')}.txt"
+        extra_cmd = (
+            f"nmap -sV -O --traceroute --script vuln -T4 "
+            f"--top-ports 2000 --open -oN {RESULTS_DIR}/{extra_fn} {target_ip}"
+        )
+        print(f"\n  {c('[1a] Nmap Extra Scan — OS + vuln scripts + traceroute',G)}")
+        stdout2, _, ok2 = run_cmd_stream(extra_cmd, cfg("nmap_timeout", 900), desc="Extra: OS + vuln scripts")
+        if ok2:
+            efile = RESULTS_DIR / extra_fn
+            if efile.exists():
+                econtent = efile.read_text()
+                os2 = re.findall(r'OS details: (.+)', econtent)
+                ports2 = len(re.findall(r'^(\d+)/tcp\s+open', econtent))
+                vulns = re.findall(r'\|?\s*(\w[\w-]*)\s*:\s*(HIGH|CRITICAL|MEDIUM)', econtent, re.I)
+                hops = re.findall(r'^\d+\s+[\d.]+', econtent, re.M)
+                print(f"    Extra: {c(f'{ports2} open ports',W)}, OS: {c(os2[0] if os2 else 'N/A',W)}, Vulns: {len(vulns)}, Hops: {len(hops)}")
     else:
         print(f"\n  {c('[1a] Nmap not found — using pure Python port scan',Y)}")
         open_ports = port_scan(target_ip)
