@@ -260,9 +260,6 @@ def version_to_cves_v5(service_name, version, cve_db=None):
                 existing_ids.add(cve_id)
 
     return matches
-                    matches.append({"cve": vuln, "source": "local_db", "version_match_type": "range"})
-
-    return matches
 
 CONFIDENCE_LEVELS = ["CONFIRMED", "SUSPECTED", "THEORETICAL"]
 
@@ -1666,7 +1663,8 @@ def phase1_banner_grab(domain, target_ip, open_ports=None):
             REPORT["cve_confidence"] = conf_counts
             vr = REPORT["validation_results"]
             if vr["total_checked"] > 0:
-                print(f"  {c(f'Validation: {vr["confirmed"]} confirmed, {vr["downgraded"]} downgraded',G if vr["confirmed"] else Y)}")
+                c_conf = vr["confirmed"]; c_downg = vr["downgraded"]
+                print(f"  {c(f'Validation: {c_conf} confirmed, {c_downg} downgraded',G if c_conf else Y)}")
     else:
         print(f"  {c('Tidak ada CVE yang cocok dari banner service',G)}")
 
@@ -2450,9 +2448,12 @@ def phase5_exploit(domain):
             print(f"  {c('  ⤷ Berdasarkan chaining semua temuan: port + CVE + vuln + exploit',DIM)}")
             for i, path in enumerate(paths[:5], 1):
                 priority_label = c("🔴 PRIORITAS",R) if path["priority_score"] >= 6 else c("🟡 LIHAT",Y) if path["priority_score"] >= 3 else c("🟢 CATAT",G)
-                print(f"\n  {c(f'{i}. [{priority_label}]',BOLD)} {c(path[\"name\"],W)}")
-                print(f"     {c('Likelihood:',C)} {c(path[\"likelihood\"],G if path[\"likelihood\"]==\"HIGH\" else Y)}  "
-                      f"{c('Impact:',C)} {c(path[\"impact\"],R if path[\"impact\"]==\"CRITICAL\" else Y)}  "
+                p_name = path["name"]
+                p_like = path["likelihood"]
+                p_imp = path["impact"]
+                print(f"\n  {c(f'{i}. [{priority_label}]',BOLD)} {c(p_name,W)}")
+                print(f"     {c('Likelihood:',C)} {c(p_like,G if p_like=='HIGH' else Y)}  "
+                      f"{c('Impact:',C)} {c(p_imp,R if p_imp=='CRITICAL' else Y)}  "
                       f"{c('Score:',C)} {path['priority_score']}")
                 for step in path["steps"][:4]:
                     print(f"     {c('▸',DIM)} {step}")
