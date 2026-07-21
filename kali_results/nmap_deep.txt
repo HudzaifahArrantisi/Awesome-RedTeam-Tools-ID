@@ -1,0 +1,23 @@
+# Nmap 7.99 scan initiated Sat Jul 18 19:23:40 2026 as: /usr/lib/nmap/nmap --privileged -sS -sV -sC -T4 --top-ports 1000 --open -oN kali_results/nmap_deep.txt 203.130.249.120
+Nmap scan report for 203.130.249.120
+Host is up (0.0098s latency).
+Not shown: 993 filtered tcp ports (no-response), 1 closed tcp port (reset)
+Some closed ports may be reported as filtered due to --defeat-rst-ratelimit
+PORT     STATE SERVICE    VERSION
+21/tcp   open  ftp?
+80/tcp   open  http-proxy F5 BIG-IP load balancer http proxy
+|_http-server-header: BigIP
+|_http-open-proxy: Proxy might be redirecting requests
+179/tcp  open  tcpwrapped
+443/tcp  open  ssl/https?
+|_ssl-date: TLS randomness does not represent time
+| ssl-cert: Subject: commonName=*.finpay.id
+| Subject Alternative Name: DNS:*.finpay.id, DNS:finpay.id
+| Not valid before: 2025-07-14T00:00:00
+|_Not valid after:  2026-08-14T23:59:59
+554/tcp  open  rtsp?
+1723/tcp open  pptp?
+Service Info: Device: load balancer
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+# Nmap done at Sat Jul 18 19:28:11 2026 -- 1 IP address (1 host up) scanned in 270.86 seconds

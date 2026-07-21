@@ -667,7 +667,7 @@ def phase3_vuln_scan(live_urls, tools):
                 run_cmd(f"sqlmap -u '{url}?{param}=1' --batch --level 2 --risk 1 --output-dir={RESULTS_DIR}/sqlmap_{domain} 2>/dev/null",180)
 
         # 3e. WPScan
-        has_wp = any("WordPress" in t for t in REPORT["technologies"]) or any("wp" in u.lower() for u in REPORT["directories"]) or any("wp" in path.get("url","").lower() for path in REPORT["vulnerabilities"])
+        has_wp = any("WordPress" in t for t in REPORT["technologies"]) or any("wp" in d.get("url","") for d in REPORT["directories"]) or any("wp" in path.get("url","").lower() for path in REPORT["vulnerabilities"])
         if tools.get("wpscan") and has_wp:
             print(f"  {c('[3e] WPScan WordPress',G)}")
             run_cmd(f"wpscan --url {url} --no-update --format json -o {RESULTS_DIR}/wpscan_{domain}.json 2>/dev/null",300)

@@ -1,0 +1,314 @@
+{
+  "target": "live.finpay.id",
+  "timestamp": "2026-07-18T19:23:40.792005",
+  "ips": [
+    "203.130.249.120"
+  ],
+  "ports": [
+    "21/tcp (ftp?)",
+    "80/tcp (http-proxy)",
+    "179/tcp (tcpwrapped)",
+    "443/tcp (ssl/https?)",
+    "554/tcp (rtsp?)",
+    "1723/tcp (pptp?)"
+  ],
+  "services": [],
+  "cves": [],
+  "subdomains": [
+    "live.finpay.id"
+  ],
+  "live_urls": [
+    "https://live.finpay.id",
+    "http://live.finpay.id"
+  ],
+  "technologies": [],
+  "directories": [
+    {
+      "url": "http://live.finpay.id/admin",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/login",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/wp-admin",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/wp-content",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/uploads",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/files",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/backup",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/db",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/.git/HEAD",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/.env",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/config",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/robots.txt",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/sitemap.xml",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/phpinfo.php",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/info.php",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/api",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/api/v1",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/graphql",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/swagger",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/docs",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/css",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/js",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/images",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/assets",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/static",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/vendor",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/install",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/setup",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/error",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/logs",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/cache",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/tmp",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/blog",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/user",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/account",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/register",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/search",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/cart",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/download",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/ajax",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/includes",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/themes",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/templates",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/server-status",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/cgi-bin",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/xmlrpc.php",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/administrator",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/phpmyadmin",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/webdav",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/.git/config",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/Dockerfile",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/.aws/credentials",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/package.json",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/composer.json",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/requirements.txt",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/wp-json",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/wp-login.php",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/wp-cron.php",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/index.php",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/index.html",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/.htaccess",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/dump.sql",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/backup.sql",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/config.php",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/database.yml",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/.env.example",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/storage/logs/laravel.log",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/wp-config.php.bak",
+      "status": 302
+    },
+    {
+      "url": "http://live.finpay.id/wp-content/debug.log",
+      "status": 302
+    }
+  ],
+  "parameters": [],
+  "vulnerabilities": [],
+  "exploit_commands": [],
+  "summary": {
+    "total": 0,
+    "critical": 0,
+    "high": 0,
+    "medium": 0,
+    "low": 0,
+    "info": 0
+  }
+}

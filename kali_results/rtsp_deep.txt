@@ -1,0 +1,1 @@
+# Nmap 7.99 scan initiated Sat Jul 18 19:46:34 2026 as: /usr/lib/nmap/nmap --privileged -sV --script rtsp-methods,rtsp-url-brute -p 554 -T4 --open -oN /home/candalena/Awesome-RedTeam-Tools-ID/kali_results/rtsp_deep.txt 203.130.249.120
