@@ -64,7 +64,6 @@ def print_table(headers, rows, title=None):
     for row in rows:
         for i, cell in enumerate(row):
             cell_s = str(cell)
-            # Strip color codes for width calc
             clean = re.sub(r'\x1b\[[0-9;]*m', '', cell_s)
             col_widths[i] = max(col_widths[i], len(clean))
     sep = '+' + '+'.join('-' * (w + 2) for w in col_widths) + '+'
