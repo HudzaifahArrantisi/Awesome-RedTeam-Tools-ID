@@ -1,0 +1,4 @@
+# Dirsearch started Tue Jul 21 09:28:47 2026 as: /usr/lib/python3/dist-packages/dirsearch/dirsearch.py -u https://feelin.my.id -w /usr/share/wordlists/dirb/common.txt -e php,asp,aspx,txt,conf,db,sql,bak,zip,tar,log,json -t 50 --format plain -o kali_results/dirsearch_feelin.my.id.txt
+
+307    15B   https://feelin.my.id/_src    -> REDIRECTS TO: https://vercel.com/deployments/feelin.my.id/source
+200     2KB  https://feelin.my.id/robots.txt

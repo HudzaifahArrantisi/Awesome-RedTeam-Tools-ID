@@ -1,0 +1,416 @@
+# Nmap 7.99 scan initiated Tue Jul 21 01:40:04 2026 as: /usr/lib/nmap/nmap --privileged -sV -O --traceroute --script vuln -T4 --top-ports 2000 --open -oN kali_results/nmap_extra_polrestabarelangbatam_id.txt 104.21.49.130
+Nmap scan report for 104.21.49.130
+Host is up (0.046s latency).
+Not shown: 1389 closed tcp ports (reset), 266 filtered tcp ports (no-response)
+Some closed ports may be reported as filtered due to --defeat-rst-ratelimit
+PORT      STATE SERVICE         VERSION
+21/tcp    open  tcpwrapped
+53/tcp    open  domain          (generic dns response: NXDOMAIN)
+| fingerprint-strings: 
+|   DNS-SD-TCP: 
+|     _services
+|     _dns-sd
+|     _udp
+|     local
+|     root-servers
+|     nstld
+|_    verisign-grs
+55/tcp    open  tcpwrapped
+57/tcp    open  tcpwrapped
+80/tcp    open  tcpwrapped
+|_http-csrf: Couldn't find any CSRF vulnerabilities.
+|_http-aspnet-debug: ERROR: Script execution failed (use -d to debug)
+|_http-stored-xss: Couldn't find any stored XSS vulnerabilities.
+|_http-server-header: cloudflare
+|_http-dombased-xss: Couldn't find any DOM based XSS.
+127/tcp   open  tcpwrapped
+220/tcp   open  tcpwrapped
+225/tcp   open  tcpwrapped
+257/tcp   open  tcpwrapped
+333/tcp   open  tcpwrapped
+443/tcp   open  tcpwrapped
+|_http-csrf: Couldn't find any CSRF vulnerabilities.
+| http-slowloris-check: 
+|   VULNERABLE:
+|   Slowloris DOS attack
+|     State: LIKELY VULNERABLE
+|     IDs:  CVE:CVE-2007-6750
+|       Slowloris tries to keep many connections to the target web server open and hold
+|       them open as long as possible.  It accomplishes this by opening connections to
+|       the target web server and sending a partial request. By doing so, it starves
+|       the http server's resources causing Denial Of Service.
+|       
+|     Disclosure date: 2009-09-17
+|     References:
+|       https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2007-6750
+|_      http://ha.ckers.org/slowloris/
+|_http-stored-xss: Couldn't find any stored XSS vulnerabilities.
+|_http-server-header: cloudflare
+|_http-dombased-xss: Couldn't find any DOM based XSS.
+475/tcp   open  tcpwrapped
+600/tcp   open  tcpwrapped
+602/tcp   open  tcpwrapped
+621/tcp   open  tcpwrapped
+639/tcp   open  tcpwrapped
+669/tcp   open  tcpwrapped
+690/tcp   open  tcpwrapped
+709/tcp   open  tcpwrapped
+713/tcp   open  tcpwrapped
+731/tcp   open  tcpwrapped
+740/tcp   open  tcpwrapped
+757/tcp   open  tcpwrapped
+778/tcp   open  tcpwrapped
+790/tcp   open  tcpwrapped
+795/tcp   open  tcpwrapped
+839/tcp   open  tcpwrapped
+840/tcp   open  tcpwrapped
+856/tcp   open  tcpwrapped
+859/tcp   open  tcpwrapped
+905/tcp   open  tcpwrapped
+924/tcp   open  tcpwrapped
+998/tcp   open  tcpwrapped
+1014/tcp  open  tcpwrapped
+1015/tcp  open  tcpwrapped
+1023/tcp  open  tcpwrapped
+1101/tcp  open  tcpwrapped
+1119/tcp  open  tcpwrapped
+1125/tcp  open  tcpwrapped
+1128/tcp  open  tcpwrapped
+1134/tcp  open  tcpwrapped
+1157/tcp  open  tcpwrapped
+1162/tcp  open  tcpwrapped
+1167/tcp  open  tcpwrapped
+1168/tcp  open  tcpwrapped
+1173/tcp  open  tcpwrapped
+1176/tcp  open  tcpwrapped
+1180/tcp  open  tcpwrapped
+1182/tcp  open  tcpwrapped
+1188/tcp  open  tcpwrapped
+1210/tcp  open  tcpwrapped
+1215/tcp  open  tcpwrapped
+1221/tcp  open  tcpwrapped
+1223/tcp  open  tcpwrapped
+1229/tcp  open  tcpwrapped
+1239/tcp  open  tcpwrapped
+1241/tcp  open  tcpwrapped
+1249/tcp  open  tcpwrapped
+1251/tcp  open  tcpwrapped
+1268/tcp  open  tcpwrapped
+1279/tcp  open  tcpwrapped
+1297/tcp  open  tcpwrapped
+1299/tcp  open  tcpwrapped
+1303/tcp  open  tcpwrapped
+1305/tcp  open  tcpwrapped
+1316/tcp  open  tcpwrapped
+1321/tcp  open  tcpwrapped
+1330/tcp  open  tcpwrapped
+1340/tcp  open  tcpwrapped
+1351/tcp  open  tcpwrapped
+1414/tcp  open  tcpwrapped
+1516/tcp  open  tcpwrapped
+1522/tcp  open  tcpwrapped
+1565/tcp  open  tcpwrapped
+1566/tcp  open  tcpwrapped
+1584/tcp  open  tcpwrapped
+1620/tcp  open  tcpwrapped
+1622/tcp  open  tcpwrapped
+1632/tcp  open  tcpwrapped
+1635/tcp  open  tcpwrapped
+1645/tcp  open  tcpwrapped
+1677/tcp  open  tcpwrapped
+1694/tcp  open  tcpwrapped
+1703/tcp  open  tcpwrapped
+1709/tcp  open  tcpwrapped
+1711/tcp  open  tcpwrapped
+1713/tcp  open  tcpwrapped
+1730/tcp  open  tcpwrapped
+1735/tcp  open  tcpwrapped
+1750/tcp  open  tcpwrapped
+1753/tcp  open  tcpwrapped
+1782/tcp  open  tcpwrapped
+1791/tcp  open  tcpwrapped
+1799/tcp  open  tcpwrapped
+1806/tcp  open  tcpwrapped
+1807/tcp  open  tcpwrapped
+1811/tcp  open  tcpwrapped
+1823/tcp  open  tcpwrapped
+1871/tcp  open  tcpwrapped
+1901/tcp  open  tcpwrapped
+1924/tcp  open  tcpwrapped
+1927/tcp  open  tcpwrapped
+1954/tcp  open  tcpwrapped
+2012/tcp  open  tcpwrapped
+2031/tcp  open  tcpwrapped
+2044/tcp  open  tcpwrapped
+2062/tcp  open  tcpwrapped
+2069/tcp  open  tcpwrapped
+2070/tcp  open  tcpwrapped
+2096/tcp  open  tcpwrapped
+2101/tcp  open  tcpwrapped
+2104/tcp  open  tcpwrapped
+2135/tcp  open  tcpwrapped
+2148/tcp  open  tcpwrapped
+2197/tcp  open  tcpwrapped
+2253/tcp  open  tcpwrapped
+2265/tcp  open  tcpwrapped
+2280/tcp  open  tcpwrapped
+2291/tcp  open  tcpwrapped
+2313/tcp  open  tcpwrapped
+2326/tcp  open  tcpwrapped
+2340/tcp  open  tcpwrapped
+2425/tcp  open  tcpwrapped
+2505/tcp  open  tcpwrapped
+2525/tcp  open  tcpwrapped
+2550/tcp  open  tcpwrapped
+2551/tcp  open  tcpwrapped
+2567/tcp  open  tcpwrapped
+2583/tcp  open  tcpwrapped
+2584/tcp  open  tcpwrapped
+2606/tcp  open  tcpwrapped
+2622/tcp  open  tcpwrapped
+2644/tcp  open  tcpwrapped
+2711/tcp  open  tcpwrapped
+2723/tcp  open  tcpwrapped
+2804/tcp  open  tcpwrapped
+2847/tcp  open  tcpwrapped
+2902/tcp  open  tcpwrapped
+2903/tcp  open  tcpwrapped
+2973/tcp  open  tcpwrapped
+2984/tcp  open  tcpwrapped
+3002/tcp  open  tcpwrapped
+3007/tcp  open  tcpwrapped
+3013/tcp  open  tcpwrapped
+3023/tcp  open  tcpwrapped
+3025/tcp  open  tcpwrapped
+3057/tcp  open  tcpwrapped
+3080/tcp  open  tcpwrapped
+3089/tcp  open  tcpwrapped
+3103/tcp  open  tcpwrapped
+3118/tcp  open  tcpwrapped
+3146/tcp  open  tcpwrapped
+3210/tcp  open  tcpwrapped
+3240/tcp  open  tcpwrapped
+3280/tcp  open  tcpwrapped
+3281/tcp  open  tcpwrapped
+3307/tcp  open  tcpwrapped
+3319/tcp  open  tcpwrapped
+3334/tcp  open  tcpwrapped
+3396/tcp  open  tcpwrapped
+3399/tcp  open  tcpwrapped
+3410/tcp  open  tcpwrapped
+3439/tcp  open  tcpwrapped
+3513/tcp  open  arcpd?
+3519/tcp  open  tcpwrapped
+3586/tcp  open  tcpwrapped
+3603/tcp  open  tcpwrapped
+3621/tcp  open  tcpwrapped
+3636/tcp  open  tcpwrapped
+3656/tcp  open  tcpwrapped
+3658/tcp  open  tcpwrapped
+3669/tcp  open  tcpwrapped
+3670/tcp  open  tcpwrapped
+3681/tcp  open  tcpwrapped
+3684/tcp  open  tcpwrapped
+3697/tcp  open  tcpwrapped
+3712/tcp  open  tcpwrapped
+3731/tcp  open  tcpwrapped
+3765/tcp  open  tcpwrapped
+3788/tcp  open  tcpwrapped
+3792/tcp  open  tcpwrapped
+3796/tcp  open  tcpwrapped
+3799/tcp  open  radius-dynauth?
+3806/tcp  open  tcpwrapped
+3813/tcp  open  tcpwrapped
+3823/tcp  open  tcpwrapped
+3824/tcp  open  tcpwrapped
+3842/tcp  open  tcpwrapped
+3846/tcp  open  tcpwrapped
+3847/tcp  open  tcpwrapped
+3848/tcp  open  tcpwrapped
+3852/tcp  open  tcpwrapped
+3853/tcp  open  tcpwrapped
+3882/tcp  open  tcpwrapped
+3888/tcp  open  tcpwrapped
+3904/tcp  open  tcpwrapped
+3908/tcp  open  tcpwrapped
+3909/tcp  open  tcpwrapped
+3911/tcp  open  tcpwrapped
+3913/tcp  open  tcpwrapped
+3919/tcp  open  tcpwrapped
+3922/tcp  open  tcpwrapped
+3929/tcp  open  tcpwrapped
+3935/tcp  open  tcpwrapped
+3956/tcp  open  tcpwrapped
+3961/tcp  open  tcpwrapped
+3964/tcp  open  tcpwrapped
+3968/tcp  open  tcpwrapped
+3972/tcp  open  tcpwrapped
+3975/tcp  open  tcpwrapped
+3979/tcp  open  tcpwrapped
+3981/tcp  open  tcpwrapped
+3983/tcp  open  tcpwrapped
+3993/tcp  open  tcpwrapped
+3994/tcp  open  tcpwrapped
+3999/tcp  open  tcpwrapped
+4010/tcp  open  tcpwrapped
+4016/tcp  open  tcpwrapped
+4022/tcp  open  tcpwrapped
+4024/tcp  open  tcpwrapped
+4025/tcp  open  tcpwrapped
+4029/tcp  open  tcpwrapped
+4035/tcp  open  tcpwrapped
+4039/tcp  open  tcpwrapped
+4058/tcp  open  tcpwrapped
+4090/tcp  open  tcpwrapped
+4096/tcp  open  tcpwrapped
+4100/tcp  open  tcpwrapped
+4101/tcp  open  tcpwrapped
+4113/tcp  open  tcpwrapped
+4119/tcp  open  tcpwrapped
+4120/tcp  open  tcpwrapped
+4143/tcp  open  tcpwrapped
+4158/tcp  open  tcpwrapped
+4164/tcp  open  tcpwrapped
+4174/tcp  open  tcpwrapped
+4234/tcp  open  tcpwrapped
+4294/tcp  open  tcpwrapped
+4300/tcp  open  tcpwrapped
+4325/tcp  open  tcpwrapped
+4355/tcp  open  tcpwrapped
+4356/tcp  open  tcpwrapped
+4357/tcp  open  tcpwrapped
+4388/tcp  open  tcpwrapped
+4407/tcp  open  tcpwrapped
+4447/tcp  open  tcpwrapped
+4534/tcp  open  tcpwrapped
+4555/tcp  open  tcpwrapped
+4601/tcp  open  tcpwrapped
+4644/tcp  open  tcpwrapped
+4658/tcp  open  tcpwrapped
+4665/tcp  open  tcpwrapped
+4687/tcp  open  tcpwrapped
+4713/tcp  open  tcpwrapped
+4778/tcp  open  tcpwrapped
+4793/tcp  open  tcpwrapped
+4860/tcp  open  tcpwrapped
+4903/tcp  open  tcpwrapped
+4949/tcp  open  tcpwrapped
+5011/tcp  open  tcpwrapped
+5015/tcp  open  tcpwrapped
+5016/tcp  open  tcpwrapped
+5040/tcp  open  tcpwrapped
+5066/tcp  open  tcpwrapped
+5088/tcp  open  tcpwrapped
+5114/tcp  open  tcpwrapped
+5147/tcp  open  tcpwrapped
+5151/tcp  open  tcpwrapped
+5201/tcp  open  tcpwrapped
+5202/tcp  open  tcpwrapped
+5212/tcp  open  tcpwrapped
+5219/tcp  open  tcpwrapped
+5242/tcp  open  tcpwrapped
+5252/tcp  open  tcpwrapped
+5261/tcp  open  tcpwrapped
+5291/tcp  open  tcpwrapped
+5339/tcp  open  tcpwrapped
+5347/tcp  open  tcpwrapped
+5370/tcp  open  tcpwrapped
+5441/tcp  open  tcpwrapped
+5444/tcp  open  tcpwrapped
+5457/tcp  open  tcpwrapped
+5458/tcp  open  tcpwrapped
+5520/tcp  open  tcpwrapped
+5803/tcp  open  tcpwrapped
+5812/tcp  open  tcpwrapped
+5905/tcp  open  tcpwrapped
+5909/tcp  open  tcpwrapped
+5918/tcp  open  tcpwrapped
+5981/tcp  open  tcpwrapped
+6008/tcp  open  tcpwrapped
+6060/tcp  open  tcpwrapped
+6247/tcp  open  tcpwrapped
+6481/tcp  open  tcpwrapped
+6550/tcp  open  tcpwrapped
+6732/tcp  open  tcpwrapped
+6896/tcp  open  tcpwrapped
+7024/tcp  open  tcpwrapped
+7051/tcp  open  tcpwrapped
+7241/tcp  open  tcpwrapped
+7438/tcp  open  tcpwrapped
+7913/tcp  open  tcpwrapped
+8019/tcp  open  tcpwrapped
+8050/tcp  open  tcpwrapped
+8080/tcp  open  tcpwrapped
+| http-slowloris-check: 
+|   VULNERABLE:
+|   Slowloris DOS attack
+|     State: LIKELY VULNERABLE
+|     IDs:  CVE:CVE-2007-6750
+|       Slowloris tries to keep many connections to the target web server open and hold
+|       them open as long as possible.  It accomplishes this by opening connections to
+|       the target web server and sending a partial request. By doing so, it starves
+|       the http server's resources causing Denial Of Service.
+|       
+|     Disclosure date: 2009-09-17
+|     References:
+|       https://cve.mitre.org/cgi-bin/cvename.cgi?name=CVE-2007-6750
+|_      http://ha.ckers.org/slowloris/
+|_http-server-header: cloudflare
+8098/tcp  open  tcpwrapped
+8540/tcp  open  tcpwrapped
+8675/tcp  open  tcpwrapped
+8676/tcp  open  tcpwrapped
+8686/tcp  open  tcpwrapped
+8996/tcp  open  tcpwrapped
+9409/tcp  open  tcpwrapped
+9444/tcp  open  tcpwrapped
+10005/tcp open  tcpwrapped
+10215/tcp open  tcpwrapped
+12021/tcp open  tcpwrapped
+12262/tcp open  tcpwrapped
+12452/tcp open  tcpwrapped
+17595/tcp open  tcpwrapped
+18018/tcp open  tcpwrapped
+18264/tcp open  tcpwrapped
+19900/tcp open  tcpwrapped
+23796/tcp open  tcpwrapped
+26000/tcp open  tcpwrapped
+27357/tcp open  tcpwrapped
+29831/tcp open  tcpwrapped
+30704/tcp open  tcpwrapped
+38188/tcp open  tcpwrapped
+41064/tcp open  tcpwrapped
+46200/tcp open  tcpwrapped
+47544/tcp open  tcpwrapped
+49236/tcp open  tcpwrapped
+49401/tcp open  tcpwrapped
+51191/tcp open  tcpwrapped
+51413/tcp open  tcpwrapped
+53313/tcp open  tcpwrapped
+53314/tcp open  tcpwrapped
+55020/tcp open  tcpwrapped
+57665/tcp open  tcpwrapped
+58002/tcp open  tcpwrapped
+58632/tcp open  tcpwrapped
+58838/tcp open  tcpwrapped
+59110/tcp open  tcpwrapped
+60123/tcp open  tcpwrapped
+60146/tcp open  tcpwrapped
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port53-TCP:V=7.99%I=7%D=7/21%Time=6A5F0658%P=x86_64-pc-linux-gnu%r(DNS-
+SF:SD-TCP,7B,"\0y\0\0\x80\x83\0\x01\0\0\0\x01\0\0\t_services\x07_dns-sd\x0
+SF:4_udp\x05local\0\0\x0c\0\x01\0\0\x06\0\x01\0\0\x0e\x08\0@\x01a\x0croot-
+SF:servers\x03net\0\x05nstld\x0cverisign-grs\x03com\0x\xc3g\xc1\0\0\x07\x0
+SF:8\0\0\x03\x84\0\t:\x80\0\x01Q\x80");
+OS fingerprint not ideal because: Didn't receive UDP response. Please try again with -sSU
+No OS matches for host
+Network Distance: 5 hops
+
+TRACEROUTE (using port 443/tcp)
+HOP RTT      ADDRESS
+1   7.19 ms  172.20.10.1
+2   ... 4
+5   46.10 ms 104.21.49.130
+
+OS and Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+# Nmap done at Tue Jul 21 01:43:57 2026 -- 1 IP address (1 host up) scanned in 233.69 seconds
