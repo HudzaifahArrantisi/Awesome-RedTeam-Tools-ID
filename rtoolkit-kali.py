@@ -1637,13 +1637,9 @@ def phase3_vuln_scan(live_urls, tools):
                     cfg("sqlmap_timeout", 180))
 
         # 3e. WPScan
-<<<<<<< HEAD
-        has_wp = any("WordPress" in t for t in REPORT["technologies"]) or any("wp" in d.get("url","") for d in REPORT["directories"]) or any("wp" in path.get("url","").lower() for path in REPORT["vulnerabilities"])
-=======
         has_wp = (any("WordPress" in t for t in REPORT["technologies"]) or
                   any("wp" in d.get("url","") for d in REPORT["directories"]) or
                   any("wp" in path.get("url","").lower() for path in REPORT["vulnerabilities"]))
->>>>>>> 8e30d25a1d388240b0c2f5495212231a2172940d
         if tools.get("wpscan") and has_wp:
             print(f"  {c('[3e] WPScan — Scanner keamanan WordPress',G)}")
             print(f"  {c('  ⤷ Mendeteksi plugin/vulnerability khusus WordPress',DIM)}")
